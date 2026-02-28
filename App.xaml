@@ -1,0 +1,34 @@
+<Application x:Class="BackgroundSlideShow.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tb="clr-namespace:H.NotifyIcon;assembly=H.NotifyIcon.Wpf"
+             ShutdownMode="OnExplicitShutdown">
+
+    <Application.Resources>
+        <ResourceDictionary>
+
+            <!-- Enum → bool converter for RadioButtons -->
+            <local:EnumToBoolConverter x:Key="EnumBoolConverter"
+                xmlns:local="clr-namespace:BackgroundSlideShow"/>
+
+            <!-- Tray icon (declared here so it lives for the application lifetime) -->
+            <tb:TaskbarIcon x:Key="TrayIcon"
+                            ToolTipText="Background Slideshow"
+                            IconSource="Resources/app.ico"
+                            TrayMouseDoubleClick="TrayDoubleClick_Click">
+                <tb:TaskbarIcon.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open"       Click="TrayOpen_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Pause All"  Click="TrayPauseAll_Click"/>
+                        <MenuItem Header="Resume All" Click="TrayResumeAll_Click"/>
+                        <MenuItem Header="Stop All"   Click="TrayStopAll_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Exit"       Click="TrayExit_Click"/>
+                    </ContextMenu>
+                </tb:TaskbarIcon.ContextMenu>
+            </tb:TaskbarIcon>
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

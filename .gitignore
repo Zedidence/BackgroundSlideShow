@@ -1,0 +1,23 @@
+# Build output
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+.vs/
+
+# Publish output
+publish/
+
+# Runtime data (never commit)
+*.db
+*.db-shm
+*.db-wal
+logs/
+thumbs/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store

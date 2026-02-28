@@ -1,0 +1,110 @@
+<UserControl x:Class="BackgroundSlideShow.Views.LibraryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:BackgroundSlideShow"
+             xmlns:vm="clr-namespace:BackgroundSlideShow.ViewModels"
+             Background="#252525"
+             AllowDrop="True"
+             Drop="LibraryView_Drop"
+             DragOver="LibraryView_DragOver">
+
+    <UserControl.Resources>
+        <local:RelativeTimeConverter x:Key="RelativeTimeConverter"/>
+    </UserControl.Resources>
+
+    <DockPanel>
+
+        <!-- Action buttons + scan status -->
+        <StackPanel DockPanel.Dock="Top" Margin="8,8,8,4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="+ Add Folder" Margin="0,0,2,0"
+                        Command="{Binding AddFolderCommand}"/>
+                <Button Grid.Column="1" Content="⟳ Refresh" Margin="2,0,2,0"
+                        Command="{Binding ScanNowCommand}"/>
+                <Button Grid.Column="2" Content="✕ All" Padding="6,4" Margin="2,0,0,0"
+                        ToolTip="Remove all folders"
+                        Command="{Binding RemoveAllFoldersCommand}"/>
+            </Grid>
+            <TextBlock Text="{Binding ScanStatus}" Foreground="#888" FontSize="10"
+                       Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <!-- Folder list (FolderItemViewModel) -->
+        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Folders}" Margin="8,4">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:FolderItemViewModel}">
+                    <Border Margin="0,2" Padding="4,3" CornerRadius="3" Background="#2D2D2D">
+                        <DockPanel LastChildFill="True">
+
+                            <!-- Remove button -->
+                            <Button DockPanel.Dock="Right" Content="✕"
+                                    FontSize="10" Padding="4,1" Margin="4,0,0,0"
+                                    VerticalAlignment="Top" Cursor="Hand"
+                                    Command="{Binding DataContext.RemoveFolderCommand,
+                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                    CommandParameter="{Binding Id}">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Setter Property="BorderThickness" Value="0"/>
+                                        <Setter Property="Foreground" Value="#888"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Foreground" Value="#FF6B6B"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+
+                            <StackPanel>
+                                <!-- Enable toggle + folder path -->
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left"
+                                              IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                              VerticalAlignment="Center" Margin="0,0,4,0"
+                                              ToolTip="Include this folder in the slideshow"/>
+                                    <TextBlock Text="📁 " Foreground="#888" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Path}" Foreground="#CCCCCC"
+                                               FontSize="11" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" ToolTip="{Binding Path}"/>
+                                </DockPanel>
+
+                                <!-- Image count + last scanned -->
+                                <TextBlock Margin="20,1,0,0" FontSize="10" Foreground="#666">
+                                    <Run Text="{Binding ImageCount, StringFormat='{}{0:N0} images', Mode=OneWay}"/>
+                                    <Run Text=" | Last scanned: "/>
+                                    <Run Text="{Binding LastScanned,
+                                               Converter={StaticResource RelativeTimeConverter},
+                                               Mode=OneWay}"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Empty-state hint -->
+        <TextBlock DockPanel.Dock="Top" Margin="8,12"
+                   Text="No folders added yet.&#x0a;Click '+ Add Folder' to get started.&#x0a;&#x0a;You can also drag &amp; drop folders here."
+                   Foreground="#888" FontSize="12" TextAlignment="Center" LineHeight="20">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Folders.Count}" Value="0">
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+    </DockPanel>
+</UserControl>
