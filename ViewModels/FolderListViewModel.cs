@@ -34,24 +34,36 @@ public partial class FolderListViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task AddFolderAsync()
     {
-        var dialog = new OpenFolderDialog { Title = "Select image folder" };
+        var dialog = new OpenFolderDialog { Title = "Select image folder(s)", Multiselect = true };
         if (dialog.ShowDialog() != true) return;
-        await DoAddFolderAsync(dialog.FolderName);
+        await DoAddFoldersAsync(dialog.FolderNames);
     }
 
     /// <summary>Called from code-behind for drag-and-drop folder paths.</summary>
-    public Task AddFolderByPathAsync(string path) => DoAddFolderAsync(path);
+    public Task AddFoldersByPathAsync(IEnumerable<string> paths) => DoAddFoldersAsync(paths);
 
-    private async Task DoAddFolderAsync(string path)
+    private async Task DoAddFoldersAsync(IEnumerable<string> paths)
     {
-        var folder = await _libraryService.AddFolderAsync(path);
+        // Add all folders first so they appear in the list before scanning begins.
+        var folders = new List<LibraryFolder>();
+        foreach (var path in paths)
+            folders.Add(await _libraryService.AddFolderAsync(path));
+
+        if (folders.Count == 0) return;
         await RefreshFoldersAsync();
 
         IsScanning = true;
-        var progress = new Progress<ScanProgress>(p =>
-            ScanStatus = $"Scanning: {p.Current:N0} / {p.Total:N0} — {p.FileName}");
-        await _libraryService.ScanFolderAsync(folder, progress);
-        await RefreshFoldersAsync(); // update image counts after scan
+        int i = 0;
+        foreach (var folder in folders)
+        {
+            i++;
+            string prefix = folders.Count > 1 ? $"[{i}/{folders.Count}] " : string.Empty;
+            var progress = new Progress<ScanProgress>(p =>
+                ScanStatus = $"{prefix}Scanning: {p.Current:N0} / {p.Total:N0} — {p.FileName}");
+            await _libraryService.ScanFolderAsync(folder, progress);
+        }
+
+        await RefreshFoldersAsync();
         IsScanning = false;
         ScanStatus = $"Done — {Folders.Sum(f => f.ImageCount):N0} images";
     }

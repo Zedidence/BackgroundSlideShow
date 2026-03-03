@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
+using BackgroundSlideShow.Services;
 
 namespace BackgroundSlideShow;
 
@@ -15,9 +16,13 @@ public class ThumbnailConverter : IValueConverter
         int decodeWidth = parameter is string s && int.TryParse(s, out var w) ? w : 64;
         try
         {
+            // Prefer the pre-generated 200 px cache JPEG — much faster than decoding the
+            // full-resolution original (which can be tens of megabytes for a 4 K wallpaper).
+            string loadPath = ThumbnailCacheService.TryGetCachedPath(path, out var thumb) ? thumb : path;
+
             var bmp = new BitmapImage();
             bmp.BeginInit();
-            bmp.UriSource = new Uri(path);
+            bmp.UriSource = new Uri(loadPath);
             bmp.DecodePixelWidth = decodeWidth;
             bmp.CacheOption = BitmapCacheOption.OnLoad;
             bmp.EndInit();

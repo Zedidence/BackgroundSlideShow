@@ -8,6 +8,26 @@
     <UserControl.Resources>
         <!-- Proxy to pipe LibraryViewModel into ContextMenus and ItemsPanelTemplates -->
         <local:BindingProxy x:Key="ViewModelProxy" Data="{Binding}"/>
+
+        <!-- Shared nav/action button style for preview overlay buttons -->
+        <Style x:Key="PreviewNavBtn" TargetType="Button">
+            <Setter Property="Background" Value="#2D2D2D"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="BorderBrush" Value="#444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#404040"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.35"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
     <!-- Root Grid lets the preview overlay sit above everything else -->
@@ -16,11 +36,12 @@
         <!-- ── Main content ──────────────────────────────────────────── -->
         <DockPanel>
 
-            <!-- Monitor filter + Search + Filter + Sort + Size -->
+            <!-- Filters + Search + Sort + Size + count summary -->
             <StackPanel DockPanel.Dock="Top" Margin="8,8,8,4">
 
-                <!-- Monitor pool filter -->
-                <ComboBox Margin="0,0,0,4"
+                <!-- Monitor pool filter label + combo -->
+                <TextBlock Text="Monitor pool:" Foreground="#888" FontSize="10" Margin="0,0,0,2"/>
+                <ComboBox Margin="0,0,0,6"
                           ItemsSource="{Binding GalleryMonitorOptions}"
                           DisplayMemberPath="Label"
                           SelectedItem="{Binding SelectedGalleryMonitorFilter, Mode=TwoWay}"
@@ -71,7 +92,7 @@
                 </Grid>
 
                 <!-- Thumbnail size slider -->
-                <DockPanel Margin="0,0,0,2">
+                <DockPanel Margin="0,0,0,4">
                     <TextBlock DockPanel.Dock="Right" Width="34" TextAlignment="Right"
                                Foreground="#666" FontSize="10" VerticalAlignment="Center"
                                Text="{Binding ThumbnailSize, StringFormat='{}{0}px'}"/>
@@ -80,7 +101,77 @@
                             IsSnapToTickEnabled="True"
                             ToolTip="Thumbnail size"/>
                 </DockPanel>
+
+                <!-- Count summary + excluded badge row -->
+                <DockPanel Margin="0,2,0,0">
+                    <!-- Excluded count chip (right-aligned) -->
+                    <Border DockPanel.Dock="Right" Padding="6,2" CornerRadius="3"
+                            Background="#3A1A1A" BorderBrush="#5C2A2A" BorderThickness="1">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowExcludedBadge}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding ExcludedBadgeText}"
+                                   Foreground="#CC6666" FontSize="10"
+                                   ToolTip="Right-click an image to include or exclude it"/>
+                    </Border>
+                    <!-- Count summary -->
+                    <TextBlock Text="{Binding CountSummaryText}"
+                               Foreground="#666" FontSize="10" VerticalAlignment="Center"/>
+                </DockPanel>
+
             </StackPanel>
+
+            <!-- ── Empty state: library has no images ── -->
+            <Grid DockPanel.Dock="Top">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLibraryEmpty}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16,32">
+                    <TextBlock Text="📂" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                    <TextBlock Text="No images in your library" Foreground="#888"
+                               FontSize="13" TextAlignment="Center" Margin="0,0,0,4"/>
+                    <TextBlock Text="Add a folder in the sidebar to get started."
+                               Foreground="#555" FontSize="11" TextAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- ── Empty state: filters return nothing ── -->
+            <Grid DockPanel.Dock="Top">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFilterEmpty}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16,24">
+                    <TextBlock Text="No images match your filters." Foreground="#888"
+                               FontSize="13" TextAlignment="Center" Margin="0,0,0,4"/>
+                    <TextBlock Text="Try adjusting the search, orientation, or monitor filter."
+                               Foreground="#555" FontSize="11" TextAlignment="Center" Margin="0,0,0,10"/>
+                    <Button Content="Clear Filters" HorizontalAlignment="Center"
+                            Command="{Binding ClearFiltersCommand}"
+                            Padding="12,5" Background="#2D2D2D"
+                            Foreground="#AAAAAA" BorderBrush="#555"/>
+                </StackPanel>
+            </Grid>
 
             <!-- Virtualized image grid -->
             <ListBox ItemsSource="{Binding Images}"
@@ -107,7 +198,16 @@
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
-                                    <ContentPresenter/>
+                                    <Border x:Name="SelectionBorder"
+                                            BorderThickness="2" BorderBrush="Transparent">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="SelectionBorder"
+                                                    Property="BorderBrush" Value="#5B9BD5"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
                                 </ControlTemplate>
                             </Setter.Value>
                         </Setter>
@@ -183,7 +283,8 @@
                                     </Style>
                                 </Border.Style>
                                 <TextBlock Text="✕" Foreground="#FF6B6B" FontSize="14" FontWeight="Bold"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           ToolTip="Excluded — right-click to include in slideshow"/>
                             </Border>
                         </Grid>
                     </DataTemplate>
@@ -193,7 +294,11 @@
         </DockPanel>
 
         <!-- ── Preview overlay ───────────────────────────────────────────── -->
-        <Grid Background="#CC000000" MouseDown="PreviewOverlay_MouseDown">
+        <Grid x:Name="PreviewOverlayGrid" Background="#CC000000"
+              MouseDown="PreviewOverlay_MouseDown"
+              IsVisibleChanged="PreviewOverlay_IsVisibleChanged"
+              Focusable="True"
+              KeyDown="PreviewOverlay_KeyDown">
             <Grid.Style>
                 <Style TargetType="Grid">
                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -206,7 +311,7 @@
             </Grid.Style>
 
             <Border Background="#1E1E1E" CornerRadius="8" Padding="16" Margin="12"
-                    MaxWidth="420" MaxHeight="560"
+                    MaxWidth="420" MaxHeight="620"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
                     MouseDown="PreviewContent_MouseDown">
                 <StackPanel>
@@ -222,12 +327,32 @@
                     </DockPanel>
 
                     <!-- Large preview image -->
-                    <Border Background="#111" Margin="0,0,0,10" MaxHeight="300">
+                    <Border Background="#111" Margin="0,0,0,8" MaxHeight="300">
                         <Image MaxWidth="388" MaxHeight="300" Stretch="Uniform"
                                Source="{Binding SelectedImage.FilePath,
                                         Converter={x:Static local:ThumbnailConverter.Instance},
                                         ConverterParameter=388}"/>
                     </Border>
+
+                    <!-- Navigation row: prev / position / next -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="◀ Prev"
+                                Style="{StaticResource PreviewNavBtn}"
+                                Command="{Binding NavigatePreviousCommand}"
+                                ToolTip="Previous image (Left arrow key)"/>
+                        <TextBlock Grid.Column="1" Text="{Binding PreviewPositionText}"
+                                   Foreground="#666" FontSize="10" FontFamily="Consolas"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="2" Content="Next ▶"
+                                Style="{StaticResource PreviewNavBtn}"
+                                Command="{Binding NavigateNextCommand}"
+                                ToolTip="Next image (Right arrow key)"/>
+                    </Grid>
 
                     <!-- Metadata grid -->
                     <Grid>

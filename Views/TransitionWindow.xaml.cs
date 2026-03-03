@@ -1,17 +1,25 @@
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using BackgroundSlideShow.Models;
 
 namespace BackgroundSlideShow.Views;
 
 /// <summary>
 /// Full-screen borderless overlay that crossfades between the old and new wallpaper.
-/// The window covers a single monitor, displays the previous wallpaper image,
-/// then animates its opacity from 1 → 0, revealing the new wallpaper behind it.
 ///
-/// Lifecycle: created by the ShowTransitionOverlay delegate in App.xaml.cs,
-/// self-closes when the animation completes.
+/// Lifecycle:
+///   1. Caller creates the window and calls Show().
+///   2. OnContentRendered fires (first WPF frame committed to DWM).
+///   3. Caller calls SetWallpaper externally.
+///   4. Caller calls BeginFade() — opacity animates 1→0, revealing the new wallpaper.
+///   5. Window self-closes when the animation completes.
+///
+/// This ordering guarantees the overlay is always visible before the wallpaper
+/// changes, and the fade only starts after the new wallpaper is ready underneath.
 /// </summary>
 public partial class TransitionWindow : Window
 {
@@ -21,16 +29,21 @@ public partial class TransitionWindow : Window
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
 
+    private static readonly IntPtr HWND_BOTTOM = new(1);
+
     private const uint SWP_NOACTIVATE = 0x0010;
-    private static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
+    private const uint SWP_NOMOVE     = 0x0002;
+    private const uint SWP_NOSIZE     = 0x0001;
 
     // ── Fields ────────────────────────────────────────────────────────────────
 
     private readonly Rect _monitorBounds;
     private readonly int  _durationMs;
-    private bool _imageLoaded;
+    private bool _fadeStarted;
 
-    public TransitionWindow(string oldImagePath, Rect monitorBounds, int durationMs)
+    public bool IsImageLoaded { get; private set; }
+
+    public TransitionWindow(string oldImagePath, Rect monitorBounds, int durationMs, FitMode fitMode)
     {
         InitializeComponent();
 
@@ -43,13 +56,28 @@ public partial class TransitionWindow : Window
         Width  = monitorBounds.Width;
         Height = monitorBounds.Height;
 
-        // Load the old wallpaper image.  We decode at monitor width to keep memory reasonable
-        // while still looking sharp (avoids decoding a 24 MP original at full resolution).
+        // Match the overlay's stretch mode to the wallpaper fit setting so the
+        // image displayed during the transition looks identical to the old wallpaper.
+        OldImage.Stretch = fitMode switch
+        {
+            FitMode.Fill    => Stretch.UniformToFill,
+            FitMode.Fit     => Stretch.Uniform,
+            FitMode.Stretch => Stretch.Fill,
+            FitMode.Center  => Stretch.None,
+            FitMode.Tile    => Stretch.UniformToFill, // WPF Image can't tile; best approximation
+            _               => Stretch.UniformToFill,
+        };
+
+        if (fitMode == FitMode.Center)
+        {
+            OldImage.HorizontalAlignment = HorizontalAlignment.Center;
+            OldImage.VerticalAlignment   = VerticalAlignment.Center;
+        }
+
+        // Load the old wallpaper image.  Prefer the thumbnail cache for speed — the
+        // fade is brief enough that pixel-perfect resolution isn't necessary.
         try
         {
-            // Prefer the thumbnail cache for speed — the fade is brief enough that
-            // pixel-perfect resolution isn't necessary.  Only use the cached path if
-            // the file actually exists (TryGetCachedPath always sets the out param).
             string loadPath = oldImagePath;
             if (Services.ThumbnailCacheService.TryGetCachedPath(oldImagePath, out var cachedPath))
                 loadPath = cachedPath;
@@ -63,13 +91,13 @@ public partial class TransitionWindow : Window
             bmp.Freeze();
 
             OldImage.Source = bmp;
-            _imageLoaded = true;
+            IsImageLoaded   = true;
         }
         catch
         {
             // If the image can't be loaded just close immediately — better no transition
-            // than an empty black flash.
-            _imageLoaded = false;
+            // than an empty overlay blocking the desktop.
+            IsImageLoaded = false;
         }
     }
 
@@ -77,34 +105,72 @@ public partial class TransitionWindow : Window
     {
         base.OnSourceInitialized(e);
 
-        // Use SetWindowPos with physical screen coordinates so the overlay covers the
-        // correct monitor regardless of per-monitor DPI scaling.
+        // Set physical-pixel position before ShowWindow is called.
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        // HWND_BOTTOM places the window below all normal app windows
-        // but above the desktop/wallpaper — so transitions don't cover other apps.
         SetWindowPos(hwnd, HWND_BOTTOM,
             (int)_monitorBounds.Left, (int)_monitorBounds.Top,
             (int)_monitorBounds.Width, (int)_monitorBounds.Height,
             SWP_NOACTIVATE);
     }
 
+    /// <summary>
+    /// WPF's ShowWindow(SW_SHOWNOACTIVATE) internally re-orders the window to HWND_TOP
+    /// even though we set HWND_BOTTOM in OnSourceInitialized.  Calling SendToBottom()
+    /// right after Show() (and again here as a fallback) keeps us at desktop layer.
+    /// </summary>
+    protected override void OnActivated(EventArgs e)
+    {
+        SendToBottom();
+    }
+
+    /// <summary>Pushes the window behind all normal app windows (above wallpaper only).</summary>
+    internal void SendToBottom()
+    {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    }
+
     protected override void OnContentRendered(EventArgs e)
     {
         base.OnContentRendered(e);
 
-        if (!_imageLoaded)
+        if (!IsImageLoaded)
         {
             Close();
             return;
         }
 
-        // Fade the overlay out — revealing the new wallpaper underneath.
+        // Safety valve: if BeginFade() is never called (e.g., SetWallpaper errored),
+        // auto-start the fade after a generous timeout so the window doesn't get stranded.
+        var fallback = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(Math.Max(_durationMs * 3, 2000))
+        };
+        fallback.Tick += (_, _) => { fallback.Stop(); BeginFade(); };
+        fallback.Start();
+    }
+
+    /// <summary>
+    /// Starts the fade-out animation. Must be called on the UI thread AFTER the new
+    /// wallpaper has been applied, so the reveal exposes the correct image.
+    /// Safe to call multiple times — only the first call takes effect.
+    /// </summary>
+    public void BeginFade()
+    {
+        if (_fadeStarted || !IsLoaded || !IsVisible) return;
+        _fadeStarted = true;
+
         var anim = new DoubleAnimation(1.0, 0.0,
             new Duration(TimeSpan.FromMilliseconds(_durationMs)))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
         };
-        anim.Completed += (_, _) => Close();
+        anim.Completed += (_, _) =>
+        {
+            OldImage.Source = null; // release the bitmap immediately rather than waiting for GC
+            Close();
+        };
         OldImage.BeginAnimation(OpacityProperty, anim);
     }
 }

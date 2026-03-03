@@ -25,7 +25,9 @@ public class ThumbnailMultiConverter : IMultiValueConverter
         {
             // Prefer the pre-generated thumbnail — loading a 200 px JPEG is ~10× faster than
             // decoding a multi-megapixel original, even with DecodePixelWidth set.
-            bool cacheHit = ThumbnailCacheService.TryGetCachedPath(path, out var loadPath);
+            bool cacheHit = ThumbnailCacheService.TryGetCachedPath(path, out var thumbPath);
+            // Fall back to the original file on cache miss so images always display.
+            string loadPath = cacheHit ? thumbPath : path;
 
             var bmp = new BitmapImage();
             bmp.BeginInit();

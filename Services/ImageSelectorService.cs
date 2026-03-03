@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using BackgroundSlideShow.Models;
 
 namespace BackgroundSlideShow.Services;
@@ -26,10 +27,8 @@ public class ImageSelectorService
         if (allowedFolderIds is not null)
             pool = pool.Where(i => allowedFolderIds.Contains(i.LibraryFolderId));
 
-        pool = ImagePoolFilter.FilterWithFallback(pool, config.ImagePoolMode, monitor.IsPortrait);
-
-        var arr = pool.ToArray();
-        Random.Shared.Shuffle(arr.AsSpan()); // .NET 8+
-        return new List<ImageEntry>(arr);
+        var deck = ImagePoolFilter.FilterWithFallback(pool, config.ImagePoolMode, monitor.IsPortrait);
+        Random.Shared.Shuffle(CollectionsMarshal.AsSpan(deck));
+        return deck;
     }
 }

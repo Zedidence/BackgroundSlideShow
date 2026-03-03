@@ -13,7 +13,9 @@ public class LibraryService : ILibraryService
         new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".webp", ".bmp" };
 
     private readonly AppDbContext _db;
-    private readonly List<FileSystemWatcher> _watchers = new();
+    // Keyed by folder path — ensures one watcher per folder and allows targeted cleanup.
+    private readonly Dictionary<string, FileSystemWatcher> _watchers =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _scanSemaphore = new(1, 1);
 
     public event EventHandler? LibraryChanged;
@@ -43,6 +45,14 @@ public class LibraryService : ILibraryService
     {
         var folder = await _db.LibraryFolders.FindAsync(folderId);
         if (folder is null) return;
+
+        // Stop and dispose the watcher so it no longer fires events for this folder.
+        if (_watchers.TryGetValue(folder.Path, out var watcher))
+        {
+            watcher.Dispose();
+            _watchers.Remove(folder.Path);
+        }
+
         _db.LibraryFolders.Remove(folder);
         await _db.SaveChangesAsync();
         LibraryChanged?.Invoke(this, EventArgs.Empty);
@@ -62,6 +72,7 @@ public class LibraryService : ILibraryService
         // Use a fresh context so this read doesn't conflict with concurrent scan or save operations.
         await using var db = new AppDbContext();
         var rows = await db.LibraryFolders
+            .OrderBy(f => f.Path)
             .Select(f => new { Folder = f, Count = f.Images.Count() })
             .ToListAsync();
         return rows.Select(r => (r.Folder, r.Count)).ToList();
@@ -120,9 +131,9 @@ public class LibraryService : ILibraryService
 
     public async Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null)
     {
-        var folders = await _db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync();
+        var folders = await _db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync().ConfigureAwait(false);
         foreach (var folder in folders)
-            await ScanFolderAsync(folder, progress, fireEvent: false);
+            await ScanFolderAsync(folder, progress, fireEvent: false).ConfigureAwait(false);
         LibraryChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -131,21 +142,22 @@ public class LibraryService : ILibraryService
     {
         if (!Directory.Exists(folder.Path)) return;
 
-        var files = Directory.EnumerateFiles(folder.Path, "*", SearchOption.AllDirectories)
-            .Where(f => SupportedExtensions.Contains(Path.GetExtension(f)))
-            .ToList();
+        var files = await Task.Run(() =>
+            Directory.EnumerateFiles(folder.Path, "*", SearchOption.AllDirectories)
+                .Where(f => SupportedExtensions.Contains(Path.GetExtension(f)))
+                .ToList()).ConfigureAwait(false);
 
         var existing = await _db.Images
             .Where(i => i.LibraryFolderId == folder.Id)
-            .ToDictionaryAsync(i => i.FilePath);
+            .ToDictionaryAsync(i => i.FilePath).ConfigureAwait(false);
 
         var seen = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
 
-        var (toAdd, toUpdate) = ScanDiskFiles(folder.Id, files, existing, progress);
+        var (toAdd, toUpdate) = await Task.Run(() => ScanDiskFiles(folder.Id, files, existing, progress)).ConfigureAwait(false);
         ApplyDatabaseChanges(folder, toAdd, toUpdate, seen, existing);
 
         folder.LastScanned = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync().ConfigureAwait(false);
         if (fireEvent) LibraryChanged?.Invoke(this, EventArgs.Empty);
 
         // Generate disk thumbnails for new/changed images in the background.
@@ -183,7 +195,9 @@ public class LibraryService : ILibraryService
         Parallel.ForEach(files, parallelOpts, file =>
         {
             int current = Interlocked.Increment(ref processed);
-            progress?.Report(new ScanProgress(current, total, Path.GetFileName(file)));
+            // Throttle: only update every 100 files to avoid flooding the UI dispatcher queue.
+            if (progress is not null && (current % 100 == 0 || current == total))
+                progress.Report(new ScanProgress(current, total, Path.GetFileName(file)));
             var info = new FileInfo(file);
 
             if (existing.TryGetValue(file, out var entry))
@@ -263,6 +277,14 @@ public class LibraryService : ILibraryService
         return await db.Images.ToListAsync(ct);
     }
 
+    public async Task<(int Total, int Excluded)> GetImageCountsAsync(CancellationToken ct = default)
+    {
+        await using var db = new AppDbContext();
+        var total    = await db.Images.CountAsync(ct);
+        var excluded = await db.Images.CountAsync(i => i.IsExcluded, ct);
+        return (total, excluded);
+    }
+
     public Task<List<ImageEntry>> GetLandscapeImagesAsync() =>
         _db.Images.Where(i => i.Width >= i.Height).ToListAsync();
 
@@ -322,6 +344,8 @@ public class LibraryService : ILibraryService
     private void AttachWatcher(LibraryFolder folder)
     {
         if (!Directory.Exists(folder.Path)) return;
+        // Prevent duplicate watchers when the same folder is added more than once.
+        if (_watchers.ContainsKey(folder.Path)) return;
 
         var watcher = new FileSystemWatcher(folder.Path)
         {
@@ -334,7 +358,7 @@ public class LibraryService : ILibraryService
         watcher.Deleted += (_, e) => OnFileEvent(folder, e.FullPath);
         watcher.Renamed += (_, e) => OnFileEvent(folder, e.FullPath);
 
-        _watchers.Add(watcher);
+        _watchers[folder.Path] = watcher;
     }
 
     private void OnFileEvent(LibraryFolder folder, string path)
@@ -357,7 +381,7 @@ public class LibraryService : ILibraryService
 
     public void Dispose()
     {
-        foreach (var w in _watchers) w.Dispose();
+        foreach (var w in _watchers.Values) w.Dispose();
         _watchers.Clear();
         _scanSemaphore.Dispose();
     }

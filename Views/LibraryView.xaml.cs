@@ -26,7 +26,19 @@ public partial class LibraryView : UserControl
         if (DataContext is not FolderListViewModel vm) return;
 
         var paths = (string[])e.Data.GetData(DataFormats.FileDrop);
-        foreach (var path in paths.Where(Directory.Exists))
-            await vm.AddFolderByPathAsync(path);
+        await vm.AddFoldersByPathAsync(paths.Where(Directory.Exists));
+    }
+
+    private void RemoveAll_Click(object sender, RoutedEventArgs e)
+    {
+        var result = MessageBox.Show(
+            "Remove all folders from the library?\n\nAll images will be removed from the database.",
+            "Remove All Folders",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes) return;
+        if (DataContext is FolderListViewModel vm)
+            vm.RemoveAllFoldersCommand.Execute(null);
     }
 }

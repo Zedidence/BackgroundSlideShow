@@ -14,28 +14,28 @@ public static class ImagePoolFilter
     /// Filters <paramref name="pool"/> by <paramref name="mode"/>, falling back to the
     /// full pool when the preferred subset is too small. Used by the slideshow engine.
     /// </summary>
-    public static IEnumerable<ImageEntry> FilterWithFallback(
+    public static List<ImageEntry> FilterWithFallback(
         IEnumerable<ImageEntry> pool,
         ImagePoolMode mode,
         bool isPortraitMonitor)
     {
-        var eligible = pool.ToList();
-        return mode switch
+        if (mode == ImagePoolMode.All)
+            return pool.ToList();
+
+        var all = pool.ToList();
+        var preferred = mode switch
         {
-            ImagePoolMode.Landscape => Fallback(eligible, eligible.Where(i => i.IsLandscape).ToList()),
-            ImagePoolMode.Portrait  => Fallback(eligible, eligible.Where(i => i.IsPortrait).ToList()),
-            ImagePoolMode.Smart     => FallbackSized(eligible,
-                                          isPortraitMonitor
-                                              ? eligible.Where(i => i.IsPortrait).ToList()
-                                              : eligible.Where(i => i.IsLandscape).ToList()),
-            _                       => eligible,
+            ImagePoolMode.Landscape => all.Where(i => i.IsLandscape).ToList(),
+            ImagePoolMode.Portrait  => all.Where(i => i.IsPortrait).ToList(),
+            _                       => isPortraitMonitor
+                                           ? all.Where(i => i.IsPortrait).ToList()
+                                           : all.Where(i => i.IsLandscape).ToList(),
         };
 
-        static IEnumerable<ImageEntry> Fallback(List<ImageEntry> all, List<ImageEntry> preferred) =>
-            preferred.Count > 0 ? preferred : all;
-
-        static IEnumerable<ImageEntry> FallbackSized(List<ImageEntry> all, List<ImageEntry> preferred) =>
-            preferred.Count >= MinPreferredPoolSize ? preferred : all;
+        bool usePreferred = mode == ImagePoolMode.Smart
+            ? preferred.Count >= MinPreferredPoolSize
+            : preferred.Count > 0;
+        return usePreferred ? preferred : all;
     }
 
     /// <summary>

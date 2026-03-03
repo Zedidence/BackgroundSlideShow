@@ -17,6 +17,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _displayName = string.Empty;
     [ObservableProperty] private System.Windows.Rect _bounds;
     [ObservableProperty] private bool _isPrimary;
+    [ObservableProperty] private bool _isSelected;
 
     // Slideshow state
     [ObservableProperty] private SlideshowStatus _status = SlideshowStatus.Stopped;

@@ -102,6 +102,12 @@ public partial class MainViewModel : ObservableObject
     private void SelectMonitor(MonitorViewModel? vm) => SelectedMonitor = vm;
 
     [RelayCommand]
+    private void StartAll()
+    {
+        foreach (var m in Monitors) m.StartCommand.Execute(null);
+    }
+
+    [RelayCommand]
     private void PauseAll()
     {
         foreach (var m in Monitors) m.PauseCommand.Execute(null);

@@ -90,7 +90,7 @@
                                                             <Setter Property="Background" Value="#1B5E20"/>
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding Status}" Value="Paused">
-                                                            <Setter Property="Background" Value="#7A3800"/>
+                                                            <Setter Property="Background" Value="#E65100"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -113,10 +113,9 @@
                                             HorizontalAlignment="Left" VerticalAlignment="Top">
                                         <Grid>
                                             <!-- Placeholder when no image -->
-                                            <TextBlock Text="No image" Foreground="#555" FontSize="12"
-                                                       HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
                                                         <Setter Property="Visibility" Value="Collapsed"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding CurrentImagePath}" Value="">
@@ -124,8 +123,14 @@
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
+                                                </StackPanel.Style>
+                                                <TextBlock Text="🖼" FontSize="22" Foreground="#444"
+                                                           HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                                <TextBlock Text="No image" Foreground="#555" FontSize="11"
+                                                           HorizontalAlignment="Center"/>
+                                                <TextBlock Text="Press Play to start" Foreground="#444" FontSize="9"
+                                                           HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                                            </StackPanel>
                                             <Image Source="{Binding CurrentImagePath,
                                                            Converter={x:Static local:ThumbnailConverter.Instance},
                                                            ConverterParameter=220}"
@@ -180,8 +185,21 @@
 
                                         <!-- Quick controls -->
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Content="▶ Play"  Style="{StaticResource ActionBtn}"
-                                                    Command="{Binding StartCommand}"  Margin="0,0,4,0"/>
+                                            <!-- Play/Resume: context-aware — resumes from current position when paused -->
+                                            <Button Margin="0,0,4,0">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource ActionBtn}">
+                                                        <Setter Property="Content" Value="▶ Play"/>
+                                                        <Setter Property="Command" Value="{Binding StartCommand}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Status}" Value="Paused">
+                                                                <Setter Property="Content" Value="▶ Resume"/>
+                                                                <Setter Property="Command" Value="{Binding ResumeCommand}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
                                             <Button Content="⏸"       Style="{StaticResource ActionBtn}"
                                                     Command="{Binding PauseCommand}"  Margin="0,0,4,0"
                                                     ToolTip="Pause"/>

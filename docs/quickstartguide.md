@@ -62,10 +62,14 @@ This creates `Resources\app.ico`. Rebuild after running it.
 When the app opens, the left panel is your **Image Library**.
 
 1. Click **+ Add Folder** in the library panel.
-2. Browse to a folder that contains your wallpaper images.
-3. The app scans the folder recursively and indexes all supported images.
+2. Browse to one or more folders that contain your wallpaper images — you can select multiple folders at once in the dialog.
+3. The app scans each folder recursively and indexes all supported images.
 
 **Supported formats:** `.jpg` / `.jpeg`, `.png`, `.webp`, `.bmp`
+
+You can also **drag and drop** one or more folders directly onto the Library panel to add them in bulk.
+
+Folders are listed alphabetically by name. Each row shows the folder name (hover for the full path), image count, and last-scanned time.
 
 You can add as many folders as you like. The library watches them live — if you add or remove images on disk, the index updates automatically within a few seconds.
 
@@ -134,7 +138,7 @@ To adjust or disable transitions:
 
 ## System Tray
 
-BackgroundSlideShow minimizes to the system tray when you close the window so the slideshow keeps running in the background.
+BackgroundSlideShow minimizes to the system tray when you click **Minimize to Tray** in the navigation bar, so the slideshow keeps running in the background. Closing the window (✕) exits the app.
 
 | Action | Result |
 |---|---|
@@ -145,8 +149,6 @@ BackgroundSlideShow minimizes to the system tray when you close the window so th
 - Open (same as double-click)
 - Pause All / Resume All / Stop All
 - Exit
-
-To disable minimize-to-tray (so closing the window quits the app), open **Settings** and uncheck **Minimize to system tray instead of closing**.
 
 ---
 
@@ -163,8 +165,22 @@ All app data is stored in `%LOCALAPPDATA%\BackgroundSlideShow\`:
 
 ---
 
+## Resetting All Data
+
+To start completely fresh, open **Settings** and click **Reset All Data** at the bottom of the window.
+
+This deletes:
+- The image library database
+- The thumbnail cache
+- App settings
+
+**Your image files on disk are not touched.** The app closes after the reset; relaunch it to re-add folders and reconfigure monitors.
+
+---
+
 ## Tips
 
+- **Multi-select folders** — the **+ Add Folder** dialog supports selecting multiple folders at once, and drag-and-drop accepts multiple folders simultaneously.
 - **Per-monitor folders** — use **Selected folders** under Folder Source to assign separate image collections to each screen. Great for paired portrait/landscape monitor setups.
 - **Too many landscape images on a portrait monitor?** Set Image Pool to **Smart match** — the engine automatically prefers matching orientation with fallback to all images.
 - **Gallery slow to open?** Thumbnails are generated in the background after the first scan. Subsequent gallery opens are fast because they load pre-cached 200 px JPEGs.

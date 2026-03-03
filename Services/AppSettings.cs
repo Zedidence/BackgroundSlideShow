@@ -11,9 +11,11 @@ namespace BackgroundSlideShow.Services;
 /// </summary>
 public class AppSettings
 {
-    private static readonly string SettingsPath = Path.Combine(
+    public static readonly string AppDataFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BackgroundSlideShow", "settings.json");
+        "BackgroundSlideShow");
+
+    private static readonly string SettingsPath = Path.Combine(AppDataFolder, "settings.json");
 
     private const string StartupRegistryKey =
         @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";

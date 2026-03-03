@@ -14,12 +14,13 @@
             <!-- Tray icon (declared here so it lives for the application lifetime) -->
             <tb:TaskbarIcon x:Key="TrayIcon"
                             ToolTipText="Background Slideshow"
-                            IconSource="Resources/app.ico"
+                            IconSource="pack://application:,,,/Resources/app.ico"
                             TrayMouseDoubleClick="TrayDoubleClick_Click">
                 <tb:TaskbarIcon.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="Open"       Click="TrayOpen_Click"/>
                         <Separator/>
+                        <MenuItem Header="Start All"  Click="TrayStartAll_Click"/>
                         <MenuItem Header="Pause All"  Click="TrayPauseAll_Click"/>
                         <MenuItem Header="Resume All" Click="TrayResumeAll_Click"/>
                         <MenuItem Header="Stop All"   Click="TrayStopAll_Click"/>

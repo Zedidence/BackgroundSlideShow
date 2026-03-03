@@ -37,6 +37,10 @@ public interface ILibraryService : IDisposable
     // ── Image queries ─────────────────────────────────────────────────────────
 
     Task<List<ImageEntry>> GetAllImagesAsync(CancellationToken ct = default);
+
+    /// <summary>Returns (total image count, excluded image count) without loading image objects.</summary>
+    Task<(int Total, int Excluded)> GetImageCountsAsync(CancellationToken ct = default);
+
     Task<List<ImageEntry>> GetFilteredImagesAsync(
         string orientationFilter,
         string searchQuery,

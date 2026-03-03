@@ -71,8 +71,74 @@ public partial class App : Application
                                           _libraryService, _imageSelector, _appSettings);
 
             // Wire the transition overlay delegate — keeps the engine decoupled from WPF windows.
-            _engine.ShowTransitionOverlay = (oldPath, bounds, durationMs) =>
-                new Views.TransitionWindow(oldPath, bounds, durationMs).Show();
+            // Track one active overlay per monitor so stale windows are closed before a new
+            // transition starts, preventing overlapping semi-transparent windows from piling up.
+            //
+            // This delegate is called via Dispatcher.Invoke (on the UI thread).  It MUST block
+            // until the overlay's first frame is composited, then return the BeginFade action.
+            // Blocking here is achieved by Dispatcher.PushFrame — a nested message loop that
+            // pumps WPF messages (including ContentRendered) while the caller waits.
+            var activeTransitions = new Dictionary<string, Views.TransitionWindow>();
+            _engine.ShowTransitionOverlay = (oldPath, bounds, durationMs, fitMode) =>
+            {
+                var key = $"{(int)bounds.Left},{(int)bounds.Top}";
+                if (activeTransitions.TryGetValue(key, out var stale))
+                {
+                    stale.Close();
+                    activeTransitions.Remove(key);
+                }
+
+                var win = new Views.TransitionWindow(oldPath, bounds, durationMs, fitMode);
+                activeTransitions[key] = win;
+                win.Closed += (_, _) => activeTransitions.Remove(key);
+
+                // Start transparent so that if ShowWindow briefly places the window at
+                // HWND_TOP before SendToBottom() takes effect, DWM composes nothing
+                // visible — eliminating the one-frame flash in front of other windows.
+                win.Opacity = 0.0;
+                win.Show();
+                win.SendToBottom();
+
+                // Block via a nested message loop until ContentRendered fires (first DWM frame).
+                // We also flip the window to full opacity here, now that it is safely at
+                // HWND_BOTTOM, so it covers the desktop before SetWallpaper is called.
+                if (win.IsImageLoaded)
+                {
+                    var frame = new System.Windows.Threading.DispatcherFrame();
+
+                    void OnRendered(object? s, EventArgs _)
+                    {
+                        win.ContentRendered -= OnRendered;
+                        win.Opacity = 1.0; // now at HWND_BOTTOM — safe to make visible
+                        frame.Continue = false;
+                    }
+                    void OnClosed(object? s, EventArgs _)
+                    {
+                        win.Closed -= OnClosed;
+                        frame.Continue = false;
+                    }
+
+                    win.ContentRendered += OnRendered;
+                    win.Closed          += OnClosed;
+
+                    // Safety: cap the wait at 500 ms so a missed ContentRendered
+                    // never stalls the slideshow indefinitely.
+                    var timeout = new System.Windows.Threading.DispatcherTimer(
+                        System.Windows.Threading.DispatcherPriority.Background)
+                    {
+                        Interval = TimeSpan.FromMilliseconds(500)
+                    };
+                    timeout.Tick += (_, _) => { timeout.Stop(); win.Opacity = 1.0; frame.Continue = false; };
+                    timeout.Start();
+
+                    System.Windows.Threading.Dispatcher.PushFrame(frame);
+                    timeout.Stop();
+                }
+
+                // Return the action that begins the fade.  The engine calls this AFTER
+                // SetWallpaper so the opacity animation reveals the correct new image.
+                return () => win.BeginFade();
+            };
 
             AppLogger.Info("Creating MainViewModel");
             _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService);
@@ -83,11 +149,12 @@ public partial class App : Application
             AppLogger.Info("Showing MainWindow");
             _mainWindow.Show();
 
-            // Force the TaskbarIcon resource to initialize now.
-            // Application.Resources are lazily instantiated in WPF, so without this
-            // the tray icon never registers with the system tray until something
-            // first accesses Resources["TrayIcon"].
-            _ = Resources["TrayIcon"];
+            // ForceCreate() is required: TaskbarIcon lives in Application.Resources and is
+            // never added to a visual tree, so OnLoaded never fires — meaning the native
+            // shell icon is never registered with the system tray.  ForceCreate(true) forces
+            // registration immediately regardless of visual-tree state.
+            if (Resources["TrayIcon"] is TaskbarIcon tray)
+                tray.ForceCreate();
 
             AppLogger.Info("Startup complete");
         }
@@ -118,17 +185,20 @@ public partial class App : Application
 
     // ── Tray event handlers ───────────────────────────────────────────────────
 
-    private void TrayOpen_Click(object sender, RoutedEventArgs e)
+    private void ShowMainWindow()
     {
-        _mainWindow?.Show();
-        _mainWindow?.Activate();
+        if (_mainWindow == null) return;
+        _mainWindow.Show();
+        _mainWindow.WindowState = System.Windows.WindowState.Normal;
+        _mainWindow.Activate();
     }
 
-    private void TrayDoubleClick_Click(object sender, RoutedEventArgs e)
-    {
-        _mainWindow?.Show();
-        _mainWindow?.Activate();
-    }
+    private void TrayOpen_Click(object sender, RoutedEventArgs e) => ShowMainWindow();
+
+    private void TrayDoubleClick_Click(object sender, RoutedEventArgs e) => ShowMainWindow();
+
+    private void TrayStartAll_Click(object sender, RoutedEventArgs e) =>
+        _mainVm?.StartAllCommand.Execute(null);
 
     private void TrayPauseAll_Click(object sender, RoutedEventArgs e) =>
         _mainVm?.PauseAllCommand.Execute(null);
@@ -141,4 +211,49 @@ public partial class App : Application
 
     private void TrayExit_Click(object sender, RoutedEventArgs e) =>
         Shutdown();
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Stops all services, wipes app data (DB, thumbs cache, settings.json),
+    /// removes the startup registry entry, and shuts down the application.
+    /// Called from the Settings window's "Reset All Data" button.
+    /// </summary>
+    public void ResetAndShutdown()
+    {
+        // Stop and dispose first so all file handles are released.
+        _engine?.StopAll();
+        _engine?.Dispose();
+        _engine = null;
+
+        _libraryService?.Dispose();
+        _libraryService = null;
+
+        _db?.Dispose();
+        _db = null;
+
+        // Remove startup registry entry.
+        if (_appSettings is not null)
+            _appSettings.LaunchOnStartup = false;
+
+        // Delete all persisted data.
+        var appData = AppSettings.AppDataFolder;
+        TryDeleteFile(System.IO.Path.Combine(appData, "library.db"));
+        TryDeleteFile(System.IO.Path.Combine(appData, "library.db-shm"));
+        TryDeleteFile(System.IO.Path.Combine(appData, "library.db-wal"));
+        TryDeleteFile(System.IO.Path.Combine(appData, "settings.json"));
+        TryDeleteDirectory(System.IO.Path.Combine(appData, "thumbs"));
+
+        Shutdown();
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { System.IO.File.Delete(path); } catch { }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try { System.IO.Directory.Delete(path, recursive: true); } catch { }
+    }
 }

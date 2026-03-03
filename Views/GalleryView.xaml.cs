@@ -43,4 +43,31 @@ public partial class GalleryView : UserControl
     {
         e.Handled = true;
     }
+
+    private void PreviewOverlay_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if ((bool)e.NewValue)
+            PreviewOverlayGrid.Focus();
+    }
+
+    private void PreviewOverlay_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (DataContext is not ImageGalleryViewModel vm) return;
+
+        switch (e.Key)
+        {
+            case Key.Left:
+                vm.NavigatePreviousCommand.Execute(null);
+                e.Handled = true;
+                break;
+            case Key.Right:
+                vm.NavigateNextCommand.Execute(null);
+                e.Handled = true;
+                break;
+            case Key.Escape:
+                vm.ClosePreviewCommand.Execute(null);
+                e.Handled = true;
+                break;
+        }
+    }
 }

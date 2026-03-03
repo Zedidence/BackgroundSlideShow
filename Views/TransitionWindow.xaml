@@ -5,15 +5,16 @@
         AllowsTransparency="True"
         Background="Transparent"
         ShowInTaskbar="False"
+        ShowActivated="False"
         Topmost="False"
         IsHitTestVisible="False"
         ResizeMode="NoResize"
         WindowStartupLocation="Manual">
 
     <!--
-        A full-screen overlay that covers one monitor with the OLD wallpaper image,
-        then fades to transparent — revealing the NEW wallpaper underneath.
-        Opened by SlideshowEngine (via ShowTransitionOverlay delegate) before SetWallpaper is called.
+        Full-screen overlay that covers one monitor with the OLD wallpaper image.
+        Sequence: Show overlay → block until first frame composited → SetWallpaper
+        (new image set underneath) → BeginFade() → opacity 1→0 reveals the new wallpaper.
     -->
     <Image x:Name="OldImage" Stretch="UniformToFill" IsHitTestVisible="False"/>
 

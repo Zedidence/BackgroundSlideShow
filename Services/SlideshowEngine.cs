@@ -19,11 +19,14 @@ public class SlideshowEngine : IDisposable
     public event EventHandler<SlideshowStateChangedEventArgs>? StateChanged;
 
     /// <summary>
-    /// Optional delegate called on the UI thread when a wallpaper is about to change.
-    /// Receives (oldImagePath, monitorBounds, durationMs). Used by the transition overlay.
+    /// Optional delegate invoked on the UI thread when a wallpaper is about to change.
+    /// Receives (oldImagePath, monitorBounds, durationMs, fitMode).
+    /// Must block until the overlay window's first frame is composited, then return an
+    /// Action that starts the fade animation.  The engine calls the returned Action AFTER
+    /// SetWallpaper so the reveal always exposes the new image.
     /// Wired up in App.xaml.cs so the engine stays decoupled from WPF windows.
     /// </summary>
-    public Action<string, System.Windows.Rect, int>? ShowTransitionOverlay { get; set; }
+    public Func<string, System.Windows.Rect, int, Models.FitMode, Action>? ShowTransitionOverlay { get; set; }
 
     public SlideshowEngine(
         MonitorService monitorService,
@@ -141,7 +144,17 @@ public class SlideshowEngine : IDisposable
 
     private void AdvanceMonitor(PerMonitorState state, bool suppressStateChanged = false)
     {
-        // Lock per-state so timer thread and UI thread (Skip) can't race on the deck index.
+        // Capture everything we need inside the lock, then do all UI/COM work outside.
+        // Calling Dispatcher.Invoke *inside* the lock risks deadlock: if the UI thread is
+        // already waiting to acquire this same lock (e.g. from a Skip command), the timer
+        // thread blocks on Dispatcher.Invoke while the UI thread blocks on the lock.
+        ImageEntry? next = null;
+        string? oldImagePath = null;
+        bool shouldTransition = false;
+        System.Windows.Rect transitionBounds = default;
+        int transitionDuration = 0;
+        Models.FitMode transitionFitMode = Models.FitMode.Fill;
+
         lock (state.AdvanceLock)
         {
             var images = _cachedImages;
@@ -168,7 +181,7 @@ public class SlideshowEngine : IDisposable
 
             if (state.ShuffleDeck.Count == 0) return;
 
-            var next = state.ShuffleDeck[state.DeckIndex++];
+            next = state.ShuffleDeck[state.DeckIndex++];
 
             if (string.IsNullOrEmpty(state.Monitor.WallpaperDevicePath))
             {
@@ -176,41 +189,61 @@ public class SlideshowEngine : IDisposable
                 return;
             }
 
-            // If transitions are enabled and there is a currently-displayed image, post a
-            // request to the UI thread to show the fade overlay BEFORE we set the new wallpaper.
-            // The overlay covers the monitor with the old image and fades to transparent,
-            // revealing the new wallpaper underneath.
-            var oldImagePath = state.SlideshowState.CurrentImage?.FilePath;
+            // Capture transition parameters while holding the lock; execute outside it.
+            oldImagePath = state.SlideshowState.CurrentImage?.FilePath;
             if (_appSettings.TransitionsEnabled
                 && !string.IsNullOrEmpty(oldImagePath)
                 && !state.Monitor.Bounds.IsEmpty
                 && ShowTransitionOverlay is not null)
             {
-                var bounds   = state.Monitor.Bounds;
-                var duration = _appSettings.TransitionDurationMs;
-                var oldPath  = oldImagePath!;
-                // Show the overlay on the UI thread.
-                System.Windows.Application.Current.Dispatcher.Invoke(
-                    () => ShowTransitionOverlay(oldPath, bounds, duration));
-                // Flush the WPF render queue so the overlay window is actually painted
-                // before SetWallpaper runs — prevents a flash of the new wallpaper.
-                System.Windows.Application.Current.Dispatcher.Invoke(
-                    System.Windows.Threading.DispatcherPriority.Render, (Action)(() => { }));
+                shouldTransition   = true;
+                transitionBounds   = state.Monitor.Bounds;
+                transitionDuration = _appSettings.TransitionDurationMs;
+                transitionFitMode  = state.Config.FitMode;
             }
-
-            try
-            {
-                _wallpaperService.SetWallpaper(state.Monitor.WallpaperDevicePath, next.FilePath, state.Config.FitMode);
-            }
-            catch (Exception ex) { AppLogger.Error($"SetWallpaper failed for monitor {state.Monitor.DeviceId}", ex); return; }
-
-            state.SlideshowState.CurrentImage = next;
-            state.SlideshowState.Status = SlideshowStatus.Playing;
-            state.SlideshowState.NextChangeAt = DateTime.UtcNow.AddSeconds(state.Config.IntervalSeconds);
-
-            if (!suppressStateChanged)
-                RaiseStateChanged(state.SlideshowState);
         }
+
+        // Correct transition sequence (outside the lock — no deadlock risk):
+        //
+        //  1. Invoke (synchronous) → ShowTransitionOverlay creates the overlay window,
+        //     then BLOCKS via Dispatcher.PushFrame until the first frame is composited.
+        //     This guarantees the overlay is visible before we touch the wallpaper.
+        //
+        //  2. SetWallpaper — safe to call now because the overlay covers the desktop.
+        //
+        //  3. Invoke → BeginFade() starts the opacity animation, revealing the new image.
+        //
+        // Using Invoke (not InvokeAsync) is safe here because the lock is already released.
+        // If the UI thread is blocked on AdvanceLock (e.g. during a Skip), the lock is
+        // released before we reach this point, so no deadlock can occur.
+
+        Action? beginFade = null;
+        if (shouldTransition)
+        {
+            var oldPath  = oldImagePath!;
+            var bounds   = transitionBounds;
+            var duration = transitionDuration;
+            var fitMode  = transitionFitMode;
+            System.Windows.Application.Current.Dispatcher.Invoke(
+                () => beginFade = ShowTransitionOverlay!(oldPath, bounds, duration, fitMode));
+        }
+
+        try
+        {
+            _wallpaperService.SetWallpaper(state.Monitor.WallpaperDevicePath!, next!.FilePath, state.Config.FitMode);
+        }
+        catch (Exception ex) { AppLogger.Error($"SetWallpaper failed for monitor {state.Monitor.DeviceId}", ex); return; }
+
+        // Now that the new wallpaper is in place, start the fade to reveal it.
+        if (beginFade is not null)
+            System.Windows.Application.Current.Dispatcher.Invoke(beginFade);
+
+        state.SlideshowState.CurrentImage = next;
+        state.SlideshowState.Status = SlideshowStatus.Playing;
+        state.SlideshowState.NextChangeAt = DateTime.UtcNow.AddSeconds(state.Config.IntervalSeconds);
+
+        if (!suppressStateChanged)
+            RaiseStateChanged(state.SlideshowState);
     }
 
     private volatile IReadOnlyList<Models.ImageEntry> _cachedImages = Array.Empty<Models.ImageEntry>();
@@ -220,6 +253,7 @@ public class SlideshowEngine : IDisposable
     private void RefreshImagePool()
     {
         _poolRefreshCts?.Cancel();
+        _poolRefreshCts?.Dispose();
         var cts = new CancellationTokenSource();
         _poolRefreshCts = cts;
 

@@ -35,7 +35,19 @@ public partial class MainWindow : Window
         LibrarySplitter.Visibility = _libraryVisible ? Visibility.Visible : Visibility.Collapsed;
         LibraryColumn.Width        = _libraryVisible ? new GridLength(220) : new GridLength(0);
         SplitterColumn.Width       = _libraryVisible ? new GridLength(4)   : new GridLength(0);
-        ToggleLibraryBtn.Content   = _libraryVisible ? "\u2261 Hide Library" : "\u2261 Show Library";
+        ToggleLibraryBtn.Content   = _libraryVisible ? "\u25C0 Library" : "\u25B6 Library";
+    }
+
+    private void SetActiveNav(System.Windows.Controls.Button active)
+    {
+        OverviewBtn.Tag = null;
+        GalleryBtn.Tag = null;
+        active.Tag = "Active";
+    }
+
+    private void ClearMonitorSelection()
+    {
+        foreach (var m in _vm.Monitors) m.IsSelected = false;
     }
 
     private void Overview_Click(object sender, RoutedEventArgs e)
@@ -43,13 +55,17 @@ public partial class MainWindow : Window
         GalleryPanel.Visibility = Visibility.Collapsed;
         MonitorContentArea.Visibility = Visibility.Visible;
         _vm.SelectedMonitor = null;
+        ClearMonitorSelection();
+        SetActiveNav(OverviewBtn);
     }
 
     private void Gallery_Click(object sender, RoutedEventArgs e)
     {
         _vm.SelectedMonitor = null;
+        ClearMonitorSelection();
         MonitorContentArea.Visibility = Visibility.Collapsed;
         GalleryPanel.Visibility = Visibility.Visible;
+        SetActiveNav(GalleryBtn);
     }
 
     private void ShowSettings_Click(object sender, RoutedEventArgs e)
@@ -63,11 +79,16 @@ public partial class MainWindow : Window
         {
             GalleryPanel.Visibility = Visibility.Collapsed;
             MonitorContentArea.Visibility = Visibility.Visible;
+            ClearMonitorSelection();
+            mvm.IsSelected = true;
             _vm.SelectedMonitor = mvm;
+            // Clear nav active state — the detail panel is neither Overview nor Gallery
+            OverviewBtn.Tag = null;
+            GalleryBtn.Tag = null;
         }
     }
 
-    private void MinimizeToTray_Click(object sender, RoutedEventArgs e)
+    private void HideToTray()
     {
         Hide();
 
@@ -86,10 +107,17 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MinimizeToTray_Click(object sender, RoutedEventArgs e) => HideToTray();
+
+    private void Window_StateChanged(object sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Minimized)
+            HideToTray();
+    }
+
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
         // The X button always exits the application completely.
-        // To hide to tray instead, use the "Minimize to Tray" button in the nav bar.
         Application.Current.Shutdown();
     }
 }

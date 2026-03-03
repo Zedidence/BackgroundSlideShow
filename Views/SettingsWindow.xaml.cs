@@ -28,4 +28,23 @@ public partial class SettingsWindow : Window
         _appSettings.Save();
         Close();
     }
+
+    private void Reset_Click(object sender, RoutedEventArgs e)
+    {
+        var result = MessageBox.Show(
+            "This will permanently delete:\n\n" +
+            "  • All indexed image folders and library data\n" +
+            "  • The thumbnail cache\n" +
+            "  • App settings\n\n" +
+            "Your actual image files on disk are not affected.\n\n" +
+            "The application will close after the reset. Are you sure?",
+            "Reset All Data",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes) return;
+
+        Close();
+        ((App)Application.Current).ResetAndShutdown();
+    }
 }

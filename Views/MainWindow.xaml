@@ -6,13 +6,15 @@
         Width="1000" Height="650"
         MinWidth="800" MinHeight="500"
         WindowStartupLocation="CenterScreen"
-        Closing="Window_Closing">
+        Closing="Window_Closing"
+        StateChanged="Window_StateChanged">
 
     <Window.Resources>
         <Style x:Key="NavButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#CCCCCC"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -20,6 +22,11 @@
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Foreground" Value="White"/>
                     <Setter Property="Background" Value="#3A3A3A"/>
+                </Trigger>
+                <!-- Active view: bright bottom border + white text -->
+                <Trigger Property="Tag" Value="Active">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="BorderBrush" Value="#5B9BD5"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -31,17 +38,20 @@
         <Border DockPanel.Dock="Top" Background="#2D2D2D" Padding="8,4">
             <DockPanel>
                 <StackPanel Orientation="Horizontal">
-                    <Button x:Name="ToggleLibraryBtn" Content="≡ Hide Library"
+                    <Button x:Name="ToggleLibraryBtn" Content="◀ Library"
                             Style="{StaticResource NavButton}" Click="ToggleLibrary_Click"
                             ToolTip="Show or hide the image library sidebar"/>
-                    <Button Content="Overview" Style="{StaticResource NavButton}"
-                            Click="Overview_Click"
+                    <Button x:Name="OverviewBtn" Content="Overview" Style="{StaticResource NavButton}"
+                            Click="Overview_Click" Tag="Active"
                             ToolTip="Return to the monitor overview dashboard"/>
-                    <Button Content="Gallery" Style="{StaticResource NavButton}"
+                    <Button x:Name="GalleryBtn" Content="Gallery" Style="{StaticResource NavButton}"
                             Click="Gallery_Click"
                             ToolTip="Browse all images in your library"/>
                     <Button Content="Settings" Style="{StaticResource NavButton}" Click="ShowSettings_Click"/>
                 </StackPanel>
+                <!-- Divider between nav tabs and right-side actions -->
+                <Border Width="1" Background="#444" Margin="8,4" VerticalAlignment="Stretch"/>
+
                 <!-- Right-side controls -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="■ Stop All" Style="{StaticResource NavButton}"
@@ -103,10 +113,23 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Margin="0,0,6,4" Padding="8,6" Background="#2D2D2D"
-                                            BorderBrush="#555" BorderThickness="1"
+                                    <Border Margin="0,0,6,4" Padding="8,6"
                                             MinWidth="120" Cursor="Hand"
                                             MouseLeftButtonUp="MonitorCard_Click">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#2D2D2D"/>
+                                                <Setter Property="BorderBrush" Value="#555"/>
+                                                <Setter Property="BorderThickness" Value="1"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                        <Setter Property="Background" Value="#1E3246"/>
+                                                        <Setter Property="BorderBrush" Value="#5B9BD5"/>
+                                                        <Setter Property="BorderThickness" Value="1,1,1,2"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
                                         <StackPanel>
                                             <!-- Name -->
                                             <TextBlock Text="{Binding DisplayName}" Foreground="White"
@@ -138,7 +161,7 @@
                                                                 <Setter Property="Foreground" Value="#4CAF50"/>
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding Status}" Value="Paused">
-                                                                <Setter Property="Foreground" Value="#FFC107"/>
+                                                                <Setter Property="Foreground" Value="#E65100"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
