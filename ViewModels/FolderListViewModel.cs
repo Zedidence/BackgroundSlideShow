@@ -104,7 +104,7 @@ public partial class FolderListViewModel : ObservableObject, IDisposable
                 async vm => await _libraryService.SetFolderEnabledAsync(vm.Id, vm.IsEnabled)))
             .ToList();
 
-        App.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             Folders.Clear();
             foreach (var vm in vms) Folders.Add(vm);

@@ -41,8 +41,10 @@ public class SlideshowEngine : IDisposable
         _imageSelector = imageSelector;
         _appSettings = appSettings;
 
-        _libraryService.LibraryChanged += (_, _) => RefreshImagePool();
+        _libraryService.LibraryChanged += OnLibraryChanged;
     }
+
+    private void OnLibraryChanged(object? sender, EventArgs e) => RefreshImagePool();
 
     // ── Public control ────────────────────────────────────────────────────────
 
@@ -283,8 +285,10 @@ public class SlideshowEngine : IDisposable
 
     public void Dispose()
     {
+        _libraryService.LibraryChanged -= OnLibraryChanged;
         _poolRefreshCts?.Cancel();
         _poolRefreshCts?.Dispose();
+        _poolRefreshCts = null;
         foreach (var s in _states.Values)
         {
             s.Timer?.Stop();

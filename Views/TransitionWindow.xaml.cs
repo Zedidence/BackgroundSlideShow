@@ -40,6 +40,7 @@ public partial class TransitionWindow : Window
     private readonly Rect _monitorBounds;
     private readonly int  _durationMs;
     private bool _fadeStarted;
+    private DispatcherTimer? _fallbackTimer;
 
     public bool IsImageLoaded { get; private set; }
 
@@ -143,12 +144,12 @@ public partial class TransitionWindow : Window
 
         // Safety valve: if BeginFade() is never called (e.g., SetWallpaper errored),
         // auto-start the fade after a generous timeout so the window doesn't get stranded.
-        var fallback = new DispatcherTimer(DispatcherPriority.Background)
+        _fallbackTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(Math.Max(_durationMs * 3, 2000))
         };
-        fallback.Tick += (_, _) => { fallback.Stop(); BeginFade(); };
-        fallback.Start();
+        _fallbackTimer.Tick += (_, _) => { _fallbackTimer.Stop(); BeginFade(); };
+        _fallbackTimer.Start();
     }
 
     /// <summary>
@@ -160,6 +161,10 @@ public partial class TransitionWindow : Window
     {
         if (_fadeStarted || !IsLoaded || !IsVisible) return;
         _fadeStarted = true;
+
+        // Stop the safety-valve timer now that we have a real fade to run.
+        _fallbackTimer?.Stop();
+        _fallbackTimer = null;
 
         var anim = new DoubleAnimation(1.0, 0.0,
             new Duration(TimeSpan.FromMilliseconds(_durationMs)))

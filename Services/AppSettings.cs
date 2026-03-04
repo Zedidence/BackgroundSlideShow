@@ -31,6 +31,12 @@ public class AppSettings
     /// <summary>Duration of the crossfade animation in milliseconds (200–1500).</summary>
     public int TransitionDurationMs { get; set; } = 600;
 
+    /// <summary>Folder containing GIF files for GIF Wallpaper Mode.</summary>
+    public string GifFolderPath { get; set; } = "";
+
+    /// <summary>How many seconds to display each GIF before cycling to the next (3–120).</summary>
+    public int GifSecondsPerFile { get; set; } = 15;
+
     /// <summary>
     /// Gets or sets whether this app is registered to launch at Windows startup.
     /// Reads/writes the HKCU Run registry key directly (no caching).
@@ -65,6 +71,8 @@ public class AppSettings
             HasShownTrayHint     = data.HasShownTrayHint;
             TransitionsEnabled   = data.TransitionsEnabled;
             TransitionDurationMs = data.TransitionDurationMs;
+            GifFolderPath        = data.GifFolderPath;
+            GifSecondsPerFile    = data.GifSecondsPerFile;
         }
         catch { /* use defaults on any error */ }
     }
@@ -80,6 +88,8 @@ public class AppSettings
                     HasShownTrayHint     = HasShownTrayHint,
                     TransitionsEnabled   = TransitionsEnabled,
                     TransitionDurationMs = TransitionDurationMs,
+                    GifFolderPath        = GifFolderPath,
+                    GifSecondsPerFile    = GifSecondsPerFile,
                 },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
@@ -89,8 +99,10 @@ public class AppSettings
 
     private sealed class SettingsData
     {
-        public bool HasShownTrayHint     { get; set; }
-        public bool TransitionsEnabled   { get; set; } = true;
-        public int  TransitionDurationMs { get; set; } = 600;
+        public bool   HasShownTrayHint     { get; set; }
+        public bool   TransitionsEnabled   { get; set; } = true;
+        public int    TransitionDurationMs { get; set; } = 600;
+        public string GifFolderPath        { get; set; } = "";
+        public int    GifSecondsPerFile    { get; set; } = 15;
     }
 }

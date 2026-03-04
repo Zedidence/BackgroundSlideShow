@@ -1,0 +1,11 @@
+<Window x:Class="BackgroundSlideShow.Views.GifWallpaperWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        AllowsTransparency="False"
+        Background="Black"
+        Focusable="False">
+    <Image x:Name="GifFrame" Stretch="UniformToFill"/>
+</Window>

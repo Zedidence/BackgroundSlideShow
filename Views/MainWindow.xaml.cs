@@ -41,7 +41,8 @@ public partial class MainWindow : Window
     private void SetActiveNav(System.Windows.Controls.Button active)
     {
         OverviewBtn.Tag = null;
-        GalleryBtn.Tag = null;
+        GalleryBtn.Tag  = null;
+        GifBtn.Tag      = null;
         active.Tag = "Active";
     }
 
@@ -52,7 +53,8 @@ public partial class MainWindow : Window
 
     private void Overview_Click(object sender, RoutedEventArgs e)
     {
-        GalleryPanel.Visibility = Visibility.Collapsed;
+        GalleryPanel.Visibility       = Visibility.Collapsed;
+        GifPanel.Visibility           = Visibility.Collapsed;
         MonitorContentArea.Visibility = Visibility.Visible;
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
@@ -64,8 +66,19 @@ public partial class MainWindow : Window
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
         MonitorContentArea.Visibility = Visibility.Collapsed;
-        GalleryPanel.Visibility = Visibility.Visible;
+        GifPanel.Visibility           = Visibility.Collapsed;
+        GalleryPanel.Visibility       = Visibility.Visible;
         SetActiveNav(GalleryBtn);
+    }
+
+    private void GifMode_Click(object sender, RoutedEventArgs e)
+    {
+        _vm.SelectedMonitor = null;
+        ClearMonitorSelection();
+        MonitorContentArea.Visibility = Visibility.Collapsed;
+        GalleryPanel.Visibility       = Visibility.Collapsed;
+        GifPanel.Visibility           = Visibility.Visible;
+        SetActiveNav(GifBtn);
     }
 
     private void ShowSettings_Click(object sender, RoutedEventArgs e)
@@ -77,14 +90,16 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement fe && fe.DataContext is ViewModels.MonitorViewModel mvm)
         {
-            GalleryPanel.Visibility = Visibility.Collapsed;
+            GalleryPanel.Visibility       = Visibility.Collapsed;
+            GifPanel.Visibility           = Visibility.Collapsed;
             MonitorContentArea.Visibility = Visibility.Visible;
             ClearMonitorSelection();
             mvm.IsSelected = true;
             _vm.SelectedMonitor = mvm;
             // Clear nav active state — the detail panel is neither Overview nor Gallery
             OverviewBtn.Tag = null;
-            GalleryBtn.Tag = null;
+            GalleryBtn.Tag  = null;
+            GifBtn.Tag      = null;
         }
     }
 

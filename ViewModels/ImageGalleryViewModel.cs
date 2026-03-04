@@ -28,7 +28,7 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
     {
         var options = new List<MonitorFilterOption> { MonitorFilterOption.AllMonitors };
         options.AddRange(monitors.Select(m => new MonitorFilterOption(m.DisplayName, m)));
-        App.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             GalleryMonitorOptions = options;
             SelectedGalleryMonitorFilter = options[0];
@@ -233,6 +233,11 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
             await Task.WhenAll(filteredTask, countsTask);
             cts.Token.ThrowIfCancellationRequested();
 
+            // Guard against the TOCTOU window between the cancellation check above and the
+            // Dispatcher.Invoke below: a newer refresh may have started (replacing _refreshCts)
+            // after our queries returned but before we applied the results.
+            if (!ReferenceEquals(_refreshCts, cts)) return;
+
             var filtered = filteredTask.Result;
             var (total, excluded) = countsTask.Result;
 
@@ -242,7 +247,7 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
             var list = result.ToList();
 
-            App.Current.Dispatcher.Invoke(() =>
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 TotalCount    = total;
                 ExcludedCount = excluded;

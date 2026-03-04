@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,19 +23,58 @@ public static class ThumbnailCacheService
     /// <summary>Maximum pixel dimension (width or height) of a cached thumbnail.</summary>
     public const int MaxThumbDimension = 200;
 
+    // ── In-memory index of known cached paths ─────────────────────────────────
+    // Populated at startup via PreloadCacheIndex(). After that TryGetCachedPath
+    // is O(1) with zero disk I/O — critical since it runs on the UI thread for
+    // every gallery cell that scrolls into view.
+
+    private static readonly ConcurrentDictionary<string, byte> _knownCached =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Scans the thumbs directory once at startup to populate the in-memory index.
+    /// Must be called before the gallery is shown.
+    /// </summary>
+    public static void PreloadCacheIndex()
+    {
+        if (!Directory.Exists(CacheDir)) return;
+        foreach (var f in Directory.EnumerateFiles(CacheDir, "*.jpg"))
+            _knownCached.TryAdd(f, 0);
+    }
+
     // ── Path helpers ──────────────────────────────────────────────────────────
 
     public static string GetCachePath(string imagePath)
     {
-        var hash = Convert.ToHexString(
-            MD5.HashData(Encoding.UTF8.GetBytes(imagePath.ToLowerInvariant())));
-        return Path.Combine(CacheDir, hash + ".jpg");
+        // stackalloc avoids heap allocation for UTF-8 bytes and MD5 output.
+        // Called on the UI thread for every gallery cell that scrolls into view.
+        var lower = imagePath.ToLowerInvariant();
+        int byteCount = Encoding.UTF8.GetByteCount(lower);
+        Span<byte> srcBytes = byteCount <= 512
+            ? stackalloc byte[byteCount]
+            : new byte[byteCount]; // very long paths fall back to heap
+        Encoding.UTF8.GetBytes(lower, srcBytes);
+        Span<byte> hash = stackalloc byte[16];
+        MD5.HashData(srcBytes, hash);
+        return Path.Combine(CacheDir, Convert.ToHexString(hash) + ".jpg");
     }
 
+    /// <summary>
+    /// Checks if a thumbnail exists for <paramref name="imagePath"/>.
+    /// After <see cref="PreloadCacheIndex"/> has run, this is an O(1) in-memory lookup
+    /// with no disk I/O — safe to call on the UI thread in a hot scroll path.
+    /// </summary>
     public static bool TryGetCachedPath(string imagePath, out string thumbPath)
     {
         thumbPath = GetCachePath(imagePath);
-        return File.Exists(thumbPath);
+        if (_knownCached.ContainsKey(thumbPath)) return true;
+        // Fallback for files written after startup (e.g. scan happened mid-session).
+        if (File.Exists(thumbPath))
+        {
+            _knownCached.TryAdd(thumbPath, 0);
+            return true;
+        }
+        return false;
     }
 
     // ── Generation ────────────────────────────────────────────────────────────
@@ -64,6 +104,7 @@ public static class ThumbnailCacheService
             }
 
             await image.SaveAsJpegAsync(thumbPath, new JpegEncoder { Quality = 80 });
+            _knownCached.TryAdd(thumbPath, 0);
         }
         catch
         {
@@ -93,15 +134,14 @@ public static class ThumbnailCacheService
             if (!Directory.Exists(CacheDir)) return;
 
             var activeHashes = activeImagePaths
-                .Select(p => Convert.ToHexString(
-                    MD5.HashData(Encoding.UTF8.GetBytes(p.ToLowerInvariant()))) + ".jpg")
+                .Select(p => Path.GetFileName(GetCachePath(p)))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             foreach (var file in Directory.EnumerateFiles(CacheDir, "*.jpg"))
             {
                 if (!activeHashes.Contains(Path.GetFileName(file)))
                 {
-                    try { File.Delete(file); } catch { /* ignore locked files */ }
+                    try { File.Delete(file); _knownCached.TryRemove(file, out _); } catch { /* ignore locked files */ }
                 }
             }
         });

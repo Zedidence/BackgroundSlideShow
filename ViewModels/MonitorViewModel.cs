@@ -45,6 +45,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
     /// <summary>All library folders with their per-monitor assignment state.</summary>
     public ObservableCollection<FolderAssignmentItemViewModel> FolderAssignments { get; } = new();
 
+    private readonly System.ComponentModel.PropertyChangedEventHandler _configChangedHandler;
     private System.Timers.Timer? _countdownTimer;
 
     public MonitorViewModel(MonitorInfo monitor, MonitorConfig config, SlideshowEngine engine,
@@ -58,7 +59,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
         Bounds           = monitor.Bounds;
         IsPrimary        = monitor.IsPrimary;
 
-        Config.PropertyChanged += (_, e) =>
+        _configChangedHandler = (_, e) =>
         {
             if (e.PropertyName == nameof(MonitorConfig.ImagePoolMode))
                 OnPropertyChanged(nameof(PoolDescription));
@@ -66,9 +67,14 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
             if (e.PropertyName == nameof(MonitorConfig.FolderAssignmentMode))
                 ApplyFolderAssignmentToEngine();
         };
+        Config.PropertyChanged += _configChangedHandler;
 
         // Load folder assignments asynchronously; refresh when library changes
-        _ = LoadFolderAssignmentsAsync();
+        _ = LoadFolderAssignmentsAsync().ContinueWith(
+            t => AppLogger.Error("MonitorViewModel: LoadFolderAssignmentsAsync failed", t.Exception!.GetBaseException()),
+            System.Threading.CancellationToken.None,
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+            System.Threading.Tasks.TaskScheduler.Default);
         _libraryService.LibraryChanged += OnLibraryChanged;
 
         // Countdown refresh every second
@@ -88,7 +94,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
         var folders         = await _libraryService.GetFoldersWithCountAsync();
         var assignedIds     = (await _libraryService.GetFolderAssignmentsAsync(Config.Id)).ToHashSet();
 
-        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             // Unsubscribe old items
             foreach (var item in FolderAssignments)
@@ -110,7 +116,11 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
     {
         if (e.PropertyName != nameof(FolderAssignmentItemViewModel.IsAssigned)) return;
         ApplyFolderAssignmentToEngine();
-        _ = SaveFolderAssignmentsAsync();
+        _ = SaveFolderAssignmentsAsync().ContinueWith(
+            t => AppLogger.Error("MonitorViewModel: SaveFolderAssignmentsAsync failed", t.Exception!.GetBaseException()),
+            System.Threading.CancellationToken.None,
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+            System.Threading.Tasks.TaskScheduler.Default);
     }
 
     private void ApplyFolderAssignmentToEngine()
@@ -163,7 +173,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
 
     public void UpdateState(SlideshowState state)
     {
-        App.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             Status = state.Status;
             CurrentImagePath = state.CurrentImage?.FilePath ?? string.Empty;
@@ -172,6 +182,7 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        Config.PropertyChanged -= _configChangedHandler;
         _libraryService.LibraryChanged -= OnLibraryChanged;
 
         foreach (var item in FolderAssignments)

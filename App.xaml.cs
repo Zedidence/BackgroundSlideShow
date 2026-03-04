@@ -18,6 +18,8 @@ public partial class App : Application
     private LibraryService? _libraryService;
     private ImageSelectorService? _imageSelector;
     private SlideshowEngine? _engine;
+    private GifPlayerEngine? _gifEngine;
+    private ViewModels.GifPlayerViewModel? _gifPlayerVm;
     private MainViewModel? _mainVm;
     private MainWindow? _mainWindow;
 
@@ -48,6 +50,10 @@ public partial class App : Application
             AppLogger.Info("Loading AppSettings");
             _appSettings = new AppSettings();
             _appSettings.Load();
+
+            // Pre-populate the thumbnail cache path index so TryGetCachedPath is O(1)
+            // with no disk I/O during gallery scroll.
+            ThumbnailCacheService.PreloadCacheIndex();
 
             AppLogger.Info("Creating AppDbContext");
             _db = new AppDbContext();
@@ -140,8 +146,12 @@ public partial class App : Application
                 return () => win.BeginFade();
             };
 
+            AppLogger.Info("Creating GifPlayerEngine");
+            _gifEngine    = new GifPlayerEngine(_monitorService, _appSettings);
+            _gifPlayerVm  = new ViewModels.GifPlayerViewModel(_gifEngine, _appSettings);
+
             AppLogger.Info("Creating MainViewModel");
-            _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService);
+            _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService, _gifPlayerVm);
 
             AppLogger.Info("Creating MainWindow");
             _mainWindow = new MainWindow(_mainVm, _appSettings);
@@ -176,6 +186,7 @@ public partial class App : Application
         if (Resources["TrayIcon"] is TaskbarIcon tray)
             tray.Dispose();
 
+        _gifPlayerVm?.Dispose();
         _engine?.Dispose();
         _libraryService?.Dispose();
         _db?.Dispose();

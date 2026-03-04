@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.IO;
 using BackgroundSlideShow.Data;
 using BackgroundSlideShow.Models;
@@ -9,14 +10,19 @@ namespace BackgroundSlideShow.Services;
 
 public class LibraryService : ILibraryService
 {
-    private static readonly HashSet<string> SupportedExtensions =
-        new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".webp", ".bmp" };
+    private static readonly FrozenSet<string> SupportedExtensions =
+        new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp" }
+            .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly AppDbContext _db;
     // Keyed by folder path — ensures one watcher per folder and allows targeted cleanup.
     private readonly Dictionary<string, FileSystemWatcher> _watchers =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _scanSemaphore = new(1, 1);
+    // Per-folder debounce: the CTS is replaced on each new file event so only the
+    // last event in a burst actually triggers a rescan (prevents O(N) scans on bulk copies).
+    private readonly Dictionary<string, CancellationTokenSource> _fileEventDebounce =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler? LibraryChanged;
 
@@ -285,12 +291,6 @@ public class LibraryService : ILibraryService
         return (total, excluded);
     }
 
-    public Task<List<ImageEntry>> GetLandscapeImagesAsync() =>
-        _db.Images.Where(i => i.Width >= i.Height).ToListAsync();
-
-    public Task<List<ImageEntry>> GetPortraitImagesAsync() =>
-        _db.Images.Where(i => i.Height > i.Width).ToListAsync();
-
     /// <summary>
     /// Returns images filtered and sorted by the DB engine.
     /// <para>
@@ -364,25 +364,59 @@ public class LibraryService : ILibraryService
     private void OnFileEvent(LibraryFolder folder, string path)
     {
         if (!SupportedExtensions.Contains(Path.GetExtension(path))) return;
-        _ = Task.Run(async () =>
+
+        // Debounce: cancel any pending scan for this folder and schedule a fresh one.
+        // Only the last event in a burst (e.g. a bulk file copy) triggers a real scan.
+        lock (_fileEventDebounce)
         {
-            await Task.Delay(500);
-            await _scanSemaphore.WaitAsync();
-            try
+            if (_fileEventDebounce.TryGetValue(folder.Path, out var prev))
             {
-                await ScanFolderAsync(folder);
+                prev.Cancel();
+                prev.Dispose();
             }
-            finally
+            var cts = new CancellationTokenSource();
+            _fileEventDebounce[folder.Path] = cts;
+
+            _ = Task.Run(async () =>
             {
-                _scanSemaphore.Release();
-            }
-        });
+                try
+                {
+                    await Task.Delay(500, cts.Token);
+                    await _scanSemaphore.WaitAsync(cts.Token);
+                    try
+                    {
+                        await ScanFolderAsync(folder);
+                    }
+                    finally
+                    {
+                        _scanSemaphore.Release();
+                    }
+                }
+                catch (OperationCanceledException) { /* superseded by a newer event */ }
+                finally
+                {
+                    lock (_fileEventDebounce)
+                    {
+                        if (_fileEventDebounce.TryGetValue(folder.Path, out var cur) && cur == cts)
+                            _fileEventDebounce.Remove(folder.Path);
+                        cts.Dispose();
+                    }
+                }
+            }, CancellationToken.None); // run body unconditionally; cts is checked internally
+        }
     }
 
     public void Dispose()
     {
         foreach (var w in _watchers.Values) w.Dispose();
         _watchers.Clear();
+
+        lock (_fileEventDebounce)
+        {
+            foreach (var cts in _fileEventDebounce.Values) { cts.Cancel(); cts.Dispose(); }
+            _fileEventDebounce.Clear();
+        }
+
         _scanSemaphore.Dispose();
     }
 }

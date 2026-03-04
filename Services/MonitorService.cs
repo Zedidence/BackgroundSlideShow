@@ -89,6 +89,8 @@ public class MonitorService
                 // Fallback: GetMonitorRECT failed for all monitors (known Windows 11 bug).
                 // Both GDI and IDesktopWallpaper enumerate in primary-first, left-to-right order,
                 // so positional assignment is correct.
+                if (i == 0)
+                    AppLogger.Warn("MonitorService: GetMonitorRECT returned empty bounds for all monitors — using index-based wallpaper path assignment (Windows 11 bug workaround)");
                 wallpaperPath = wallpaperMonitors[i].DevicePath;
             }
             else

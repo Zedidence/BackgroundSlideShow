@@ -47,6 +47,9 @@
                     <Button x:Name="GalleryBtn" Content="Gallery" Style="{StaticResource NavButton}"
                             Click="Gallery_Click"
                             ToolTip="Browse all images in your library"/>
+                    <Button x:Name="GifBtn" Content="GIF Mode" Style="{StaticResource NavButton}"
+                            Click="GifMode_Click"
+                            ToolTip="Play animated GIFs as live desktop wallpaper"/>
                     <Button Content="Settings" Style="{StaticResource NavButton}" Click="ShowSettings_Click"/>
                 </StackPanel>
                 <!-- Divider between nav tabs and right-side actions -->
@@ -239,6 +242,11 @@
                 <local:GalleryView x:Name="GalleryPanel" Grid.Row="2"
                                    DataContext="{Binding Library.Gallery}"
                                    Visibility="Collapsed"/>
+
+                <!-- GIF mode — shown when user clicks GIF Mode, hidden otherwise -->
+                <local:GifPlayerView x:Name="GifPanel" Grid.Row="2"
+                                     DataContext="{Binding GifPlayer}"
+                                     Visibility="Collapsed"/>
 
             </Grid>
         </Grid>

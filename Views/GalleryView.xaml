@@ -218,17 +218,12 @@
                         <Grid Width="{Binding Data.ThumbnailSize, Source={StaticResource ViewModelProxy}}"
                               Height="{Binding Data.ThumbnailSize, Source={StaticResource ViewModelProxy}}"
                               Cursor="Hand">
-                            <!-- Thumbnail image -->
+                            <!-- Thumbnail image — source loaded async off the UI thread -->
                             <Image Margin="2" Stretch="UniformToFill"
                                    Width="{Binding Data.ThumbnailImageSize, Source={StaticResource ViewModelProxy}}"
                                    Height="{Binding Data.ThumbnailImageSize, Source={StaticResource ViewModelProxy}}"
+                                   local:AsyncThumbnailLoader.SourcePath="{Binding FilePath}"
                                    ToolTip="{Binding FilePath}">
-                                <Image.Source>
-                                    <MultiBinding Converter="{x:Static local:ThumbnailMultiConverter.Instance}">
-                                        <Binding Path="FilePath"/>
-                                        <Binding Path="Data.ThumbnailSize" Source="{StaticResource ViewModelProxy}"/>
-                                    </MultiBinding>
-                                </Image.Source>
                                 <Image.Style>
                                     <Style TargetType="Image">
                                         <Setter Property="Opacity" Value="1"/>
