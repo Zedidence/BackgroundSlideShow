@@ -4,6 +4,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using BackgroundSlideShow;
 using BackgroundSlideShow.Models;
 
 namespace BackgroundSlideShow.Views;
@@ -77,6 +78,8 @@ public partial class TransitionWindow : Window
 
         // Load the old wallpaper image.  Prefer the thumbnail cache for speed — the
         // fade is brief enough that pixel-perfect resolution isn't necessary.
+        // DecodePixelWidth is capped at 1920 so 8K+ source files don't cause WPF's
+        // BitmapImage decoder to allocate hundreds of MB for a brief fade overlay.
         try
         {
             string loadPath = oldImagePath;
@@ -86,7 +89,7 @@ public partial class TransitionWindow : Window
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.UriSource        = new Uri(loadPath);
-            bmp.DecodePixelWidth = (int)monitorBounds.Width;
+            bmp.DecodePixelWidth = Math.Min((int)monitorBounds.Width, 1920);
             bmp.CacheOption      = BitmapCacheOption.OnLoad;
             bmp.EndInit();
             bmp.Freeze();
@@ -94,10 +97,11 @@ public partial class TransitionWindow : Window
             OldImage.Source = bmp;
             IsImageLoaded   = true;
         }
-        catch
+        catch (Exception ex)
         {
             // If the image can't be loaded just close immediately — better no transition
             // than an empty overlay blocking the desktop.
+            AppLogger.Warn($"TransitionWindow: failed to load image '{oldImagePath}': {ex.Message}");
             IsImageLoaded = false;
         }
     }

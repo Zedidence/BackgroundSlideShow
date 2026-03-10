@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
 
@@ -81,7 +82,8 @@ public static class ThumbnailCacheService
 
     /// <summary>
     /// Generates a thumbnail for <paramref name="imagePath"/> if one doesn't already exist.
-    /// Errors are silently swallowed — callers fall back to loading from the original.
+    /// Uses <see cref="DecoderOptions.TargetSize"/> so JPEG decoders use DCT subsampling and
+    /// never allocate the full pixel buffer for 8K+ source images (~130 MB for 7680×4320).
     /// </summary>
     public static async Task GenerateAsync(string imagePath)
     {
@@ -92,7 +94,15 @@ public static class ThumbnailCacheService
         {
             Directory.CreateDirectory(CacheDir);
 
-            using var image = await Image.LoadAsync(imagePath);
+            // TargetSize tells the JPEG decoder to use hardware DCT scaling so it only
+            // allocates memory proportional to the output size, not the full source image.
+            // For non-JPEG formats the full image is still decoded — acceptable since
+            // 8K+ non-JPEG files are uncommon and PNG/TIFF have no equivalent hint.
+            var opts = new DecoderOptions
+            {
+                TargetSize = new Size(MaxThumbDimension, MaxThumbDimension),
+            };
+            using var image = await Image.LoadAsync(opts, imagePath);
 
             if (image.Width > MaxThumbDimension || image.Height > MaxThumbDimension)
             {
@@ -106,10 +116,10 @@ public static class ThumbnailCacheService
             await image.SaveAsJpegAsync(thumbPath, new JpegEncoder { Quality = 80 });
             _knownCached.TryAdd(thumbPath, 0);
         }
-        catch
+        catch (Exception ex)
         {
-            // If generation fails (corrupted image, locked file, etc.) just skip.
-            // The converter will fall back to loading from the original.
+            AppLogger.Warn($"Thumbnail generation failed for '{imagePath}': {ex.Message}");
+            // Fall back to loading from the original — gallery will still work.
         }
     }
 

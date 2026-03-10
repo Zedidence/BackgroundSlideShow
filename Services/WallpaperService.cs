@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using BackgroundSlideShow.Models;
 using BackgroundSlideShow;
@@ -91,11 +92,18 @@ public class WallpaperService
     /// </summary>
     public void SetWallpaper(string? monitorDevicePath, string imagePath, FitMode fit = FitMode.Fill)
     {
+        AppLogger.Info($"SetWallpaper → monitor={monitorDevicePath ?? "all"} fit={fit} path={imagePath}");
         var wallpaper = (IDesktopWallpaper)new DesktopWallpaperClass();
         try
         {
             wallpaper.SetWallpaper(monitorDevicePath, imagePath);
             wallpaper.SetPosition(ToDesktopPosition(fit));
+            AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
+        }
+        catch (COMException ex)
+        {
+            AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
+            throw;
         }
         finally
         {
