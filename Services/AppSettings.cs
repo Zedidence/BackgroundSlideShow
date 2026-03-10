@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using Microsoft.Win32;
+using BackgroundSlideShow;
 
 namespace BackgroundSlideShow.Services;
 
@@ -74,7 +75,7 @@ public class AppSettings
             GifFolderPath        = data.GifFolderPath;
             GifSecondsPerFile    = data.GifSecondsPerFile;
         }
-        catch { /* use defaults on any error */ }
+        catch (Exception ex) { AppLogger.Warn($"Settings load failed — using defaults. {ex.Message}"); }
     }
 
     public void Save()
@@ -94,7 +95,7 @@ public class AppSettings
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
         }
-        catch { /* ignore save errors */ }
+        catch (Exception ex) { AppLogger.Warn($"Settings save failed. {ex.Message}"); }
     }
 
     private sealed class SettingsData

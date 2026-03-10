@@ -33,15 +33,15 @@ public class LibraryService : ILibraryService
 
     // ── Folder management ─────────────────────────────────────────────────────
 
-    public async Task<LibraryFolder> AddFolderAsync(string path)
+    public async Task<LibraryFolder> AddFolderAsync(string path, CancellationToken ct = default)
     {
         path = Path.GetFullPath(path);
-        var folder = await _db.LibraryFolders.FirstOrDefaultAsync(f => f.Path == path);
+        var folder = await _db.LibraryFolders.FirstOrDefaultAsync(f => f.Path == path, ct);
         if (folder is null)
         {
             folder = new LibraryFolder { Path = path };
             _db.LibraryFolders.Add(folder);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
         }
         AttachWatcher(folder);
         return folder;
@@ -135,35 +135,36 @@ public class LibraryService : ILibraryService
 
     // ── Scanning ──────────────────────────────────────────────────────────────
 
-    public async Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null)
+    public async Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null,
+                                          CancellationToken ct = default)
     {
-        var folders = await _db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync().ConfigureAwait(false);
+        var folders = await _db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync(ct).ConfigureAwait(false);
         foreach (var folder in folders)
-            await ScanFolderAsync(folder, progress, fireEvent: false).ConfigureAwait(false);
+            await ScanFolderAsync(folder, progress, fireEvent: false, ct).ConfigureAwait(false);
         LibraryChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task ScanFolderAsync(LibraryFolder folder, IProgress<ScanProgress>? progress = null,
-                                      bool fireEvent = true)
+                                      bool fireEvent = true, CancellationToken ct = default)
     {
         if (!Directory.Exists(folder.Path)) return;
 
         var files = await Task.Run(() =>
             Directory.EnumerateFiles(folder.Path, "*", SearchOption.AllDirectories)
                 .Where(f => SupportedExtensions.Contains(Path.GetExtension(f)))
-                .ToList()).ConfigureAwait(false);
+                .ToList(), ct).ConfigureAwait(false);
 
         var existing = await _db.Images
             .Where(i => i.LibraryFolderId == folder.Id)
-            .ToDictionaryAsync(i => i.FilePath).ConfigureAwait(false);
+            .ToDictionaryAsync(i => i.FilePath, ct).ConfigureAwait(false);
 
         var seen = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
 
-        var (toAdd, toUpdate) = await Task.Run(() => ScanDiskFiles(folder.Id, files, existing, progress)).ConfigureAwait(false);
+        var (toAdd, toUpdate) = await Task.Run(() => ScanDiskFiles(folder.Id, files, existing, progress, ct), ct).ConfigureAwait(false);
         ApplyDatabaseChanges(folder, toAdd, toUpdate, seen, existing);
 
         folder.LastScanned = DateTime.UtcNow;
-        await _db.SaveChangesAsync().ConfigureAwait(false);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
         if (fireEvent) LibraryChanged?.Invoke(this, EventArgs.Empty);
 
         // Generate disk thumbnails for new/changed images in the background.
@@ -185,14 +186,16 @@ public class LibraryService : ILibraryService
             int folderId,
             List<string> files,
             Dictionary<string, ImageEntry> existing,
-            IProgress<ScanProgress>? progress)
+            IProgress<ScanProgress>? progress,
+            CancellationToken ct = default)
     {
         var toAdd    = new ConcurrentBag<ImageEntry>();
         var toUpdate = new ConcurrentBag<(ImageEntry, FileInfo, int, int)>();
 
         var parallelOpts = new ParallelOptions
         {
-            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2)
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2),
+            CancellationToken = ct,
         };
 
         int processed = 0;
@@ -215,7 +218,7 @@ public class LibraryService : ILibraryService
                         var (w, h) = ReadDimensions(file);
                         toUpdate.Add((entry, info, w, h));
                     }
-                    catch { /* skip unreadable files */ }
+                    catch (Exception ex) { AppLogger.Warn($"Skipping unreadable file '{file}': {ex.Message}"); }
                 }
             }
             else
@@ -233,7 +236,7 @@ public class LibraryService : ILibraryService
                         LastModified     = info.LastWriteTimeUtc,
                     });
                 }
-                catch { /* skip unreadable files */ }
+                catch (Exception ex) { AppLogger.Warn($"Skipping unreadable file '{file}': {ex.Message}"); }
             }
         });
 

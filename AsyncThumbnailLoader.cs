@@ -103,8 +103,38 @@ public static class AsyncThumbnailLoader
         var token      = cts.Token;
         var dispatcher = img.Dispatcher;
 
-        _ = Task.Run(() =>
+        _ = Task.Run(async () =>
         {
+            if (token.IsCancellationRequested) return;
+
+            // Choose the best source path to decode:
+            //   Cached thumbnail  → load the 200px JPEG directly (always fast/small).
+            //   Uncached JPEG     → load original; WPF's JPEG codec uses DCT subsampling
+            //                       so DecodePixelWidth=200 keeps memory minimal.
+            //   Uncached non-JPEG → PNG/WebP/BMP don't benefit from DecodePixelWidth;
+            //                       WPF would decode the full ~345–460 MB source image.
+            //                       Generate the 200px JPEG cache first, then load that.
+            string resolvedPath;
+            if (cacheHit)
+            {
+                resolvedPath = loadPath;
+            }
+            else
+            {
+                var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+                if (ext is ".jpg" or ".jpeg")
+                {
+                    resolvedPath = path;  // DCT subsampling makes this efficient
+                    _ = ThumbnailCacheService.GenerateAsync(path); // cache for next open
+                }
+                else
+                {
+                    // Generate the disk cache first; once done loadPath is a small JPEG.
+                    await ThumbnailCacheService.GenerateAsync(path);
+                    resolvedPath = System.IO.File.Exists(loadPath) ? loadPath : path;
+                }
+            }
+
             if (token.IsCancellationRequested) return;
 
             BitmapImage? bmp = null;
@@ -112,7 +142,7 @@ public static class AsyncThumbnailLoader
             {
                 bmp = new BitmapImage();
                 bmp.BeginInit();
-                bmp.UriSource        = new Uri(loadPath);
+                bmp.UriSource        = new Uri(resolvedPath);
                 bmp.CacheOption      = BitmapCacheOption.OnLoad;     // full decode on this thread
                 bmp.DecodePixelWidth = ThumbnailCacheService.MaxThumbDimension; // cap to 200 px
                 bmp.EndInit();
@@ -142,10 +172,5 @@ public static class AsyncThumbnailLoader
                     }
                 });
         }, token);
-
-        // Kick off disk-cache generation for paths not yet cached —
-        // next gallery open will load from the fast JPEG thumbnail instead.
-        if (!cacheHit)
-            _ = ThumbnailCacheService.GenerateAsync(path);
     }
 }

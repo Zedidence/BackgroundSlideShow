@@ -79,6 +79,10 @@ public class WallpaperService
     [Guid("C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD")]
     private class DesktopWallpaperClass { }
 
+    // Tracks monitors for which GetMonitorRECT has already logged a warning,
+    // so the known Windows 11 E_FAIL is only reported once per session.
+    private readonly HashSet<uint> _rectWarnedMonitors = [];
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -141,7 +145,10 @@ public class WallpaperService
                     }
                     catch (Exception rectEx)
                     {
-                        AppLogger.Error($"GetMonitorRECT failed for monitor {i} — falling back to index-based matching", rectEx);
+                        // E_FAIL from GetMonitorRECT is a known Windows 11 issue on some systems.
+                        // Log once per monitor per session to avoid spamming the log file.
+                        if (_rectWarnedMonitors.Add(i))
+                            AppLogger.Warn($"GetMonitorRECT failed for monitor {i} (will use index-based fallback): {rectEx.Message}");
                         bounds = System.Windows.Rect.Empty;
                     }
                     result.Add((path, bounds));

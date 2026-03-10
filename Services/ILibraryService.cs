@@ -13,7 +13,7 @@ public interface ILibraryService : IDisposable
 
     // ── Folder management ─────────────────────────────────────────────────────
 
-    Task<LibraryFolder> AddFolderAsync(string path);
+    Task<LibraryFolder> AddFolderAsync(string path, CancellationToken ct = default);
     Task RemoveFolderAsync(int folderId);
     Task RemoveAllFoldersAsync();
     Task<List<(LibraryFolder Folder, int ImageCount)>> GetFoldersWithCountAsync();
@@ -22,9 +22,9 @@ public interface ILibraryService : IDisposable
 
     // ── Scanning ──────────────────────────────────────────────────────────────
 
-    Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null);
+    Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null, CancellationToken ct = default);
     Task ScanFolderAsync(LibraryFolder folder, IProgress<ScanProgress>? progress = null,
-                         bool fireEvent = true);
+                         bool fireEvent = true, CancellationToken ct = default);
 
     // ── Folder assignments ────────────────────────────────────────────────────
 

@@ -238,8 +238,8 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
             // after our queries returned but before we applied the results.
             if (!ReferenceEquals(_refreshCts, cts)) return;
 
-            var filtered = filteredTask.Result;
-            var (total, excluded) = countsTask.Result;
+            var filtered = await filteredTask;
+            var (total, excluded) = await countsTask;
 
             IEnumerable<ImageEntry> result = filtered;
             if (SelectedGalleryMonitorFilter.Monitor is MonitorViewModel mon)

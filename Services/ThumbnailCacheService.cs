@@ -5,6 +5,7 @@ using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
 namespace BackgroundSlideShow.Services;
@@ -96,13 +97,14 @@ public static class ThumbnailCacheService
 
             // TargetSize tells the JPEG decoder to use hardware DCT scaling so it only
             // allocates memory proportional to the output size, not the full source image.
-            // For non-JPEG formats the full image is still decoded — acceptable since
-            // 8K+ non-JPEG files are uncommon and PNG/TIFF have no equivalent hint.
+            // For non-JPEG formats (PNG, WebP, BMP) the TargetSize hint is ignored and the
+            // full image is decoded. Loading as Rgb24 instead of the default Rgba32 reduces
+            // peak memory by ~25% (3 bytes/px vs 4) — e.g. ~345 MB vs ~460 MB for 12K PNG.
             var opts = new DecoderOptions
             {
                 TargetSize = new Size(MaxThumbDimension, MaxThumbDimension),
             };
-            using var image = await Image.LoadAsync(opts, imagePath);
+            using var image = await Image.LoadAsync<Rgb24>(opts, imagePath);
 
             if (image.Width > MaxThumbDimension || image.Height > MaxThumbDimension)
             {

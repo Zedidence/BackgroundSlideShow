@@ -29,8 +29,9 @@ public class ThumbnailConverter : IValueConverter
             bmp.Freeze();
             return bmp;
         }
-        catch
+        catch (Exception ex)
         {
+            AppLogger.Warn($"ThumbnailConverter: failed to load '{path}': {ex.Message}");
             return null;
         }
     }

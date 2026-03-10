@@ -27,7 +27,10 @@ public class ImageSelectorService
         if (allowedFolderIds is not null)
             pool = pool.Where(i => allowedFolderIds.Contains(i.LibraryFolderId));
 
-        var deck = ImagePoolFilter.FilterWithFallback(pool, config.ImagePoolMode, monitor.IsPortrait);
+        double monitorAr = monitor.Bounds is { Width: > 0, Height: > 0 }
+            ? monitor.Bounds.Width / monitor.Bounds.Height
+            : 16.0 / 9.0; // safe fallback when bounds unavailable
+        var deck = ImagePoolFilter.FilterWithFallback(pool, config.ImagePoolMode, monitorAr);
         Random.Shared.Shuffle(CollectionsMarshal.AsSpan(deck));
         return deck;
     }

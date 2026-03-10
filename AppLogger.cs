@@ -33,9 +33,10 @@ internal static class AppLogger
         {
             File.AppendAllText(LogFile, line + Environment.NewLine);
         }
-        catch
+        catch (Exception ex)
         {
-            // Can't log the logger failing — just swallow
+            // Can't log the logger failing — write to debug output as a last resort
+            System.Diagnostics.Debug.WriteLine($"AppLogger failed: {ex.Message}");
         }
     }
 
