@@ -108,6 +108,11 @@ public partial class App : Application
                 win.Show();
                 win.SendToBottom();
 
+                // WPF may re-elevate the window's Z-order after Show() returns as part
+                // of its own deferred layout/render pass.  Schedule a second SendToBottom
+                // at Render priority so it fires after that pass but before ContentRendered.
+                Dispatcher.InvokeAsync(win.SendToBottom, System.Windows.Threading.DispatcherPriority.Render);
+
                 // Block via a nested message loop until ContentRendered fires (first DWM frame).
                 // We also flip the window to full opacity here, now that it is safely at
                 // HWND_BOTTOM, so it covers the desktop before SetWallpaper is called.

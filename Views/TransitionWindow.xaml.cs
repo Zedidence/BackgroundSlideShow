@@ -30,11 +30,21 @@ public partial class TransitionWindow : Window
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
 
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
     private static readonly IntPtr HWND_BOTTOM = new(1);
 
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_NOMOVE     = 0x0002;
     private const uint SWP_NOSIZE     = 0x0001;
+
+    private const int GWL_EXSTYLE      = -20;
+    private const int WS_EX_NOACTIVATE = 0x08000000; // never steal focus
+    private const int WS_EX_TOOLWINDOW = 0x00000080; // exclude from Alt+Tab / taskbar
 
     // ── Fields ────────────────────────────────────────────────────────────────
 
@@ -110,8 +120,19 @@ public partial class TransitionWindow : Window
     {
         base.OnSourceInitialized(e);
 
-        // Set physical-pixel position before ShowWindow is called.
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+
+        // Prevent the overlay from ever stealing focus or appearing in Alt+Tab /
+        // the taskbar preview band.  WS_EX_NOACTIVATE means Windows will never
+        // activate this window in response to mouse/keyboard input or API calls,
+        // so the previously active window keeps its focus and title-bar colour
+        // throughout the entire fade — the user won't see any window "blink".
+        // WS_EX_TOOLWINDOW additionally hides it from the taskbar button area
+        // (belt-and-suspenders on top of ShowInTaskbar="False").
+        int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+
+        // Set physical-pixel position and push behind all other windows.
         SetWindowPos(hwnd, HWND_BOTTOM,
             (int)_monitorBounds.Left, (int)_monitorBounds.Top,
             (int)_monitorBounds.Width, (int)_monitorBounds.Height,
