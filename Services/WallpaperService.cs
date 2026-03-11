@@ -94,6 +94,18 @@ public class WallpaperService
     private static readonly string ScaledTempDir = Path.Combine(
         Path.GetTempPath(), "BackgroundSlideShow");
 
+    // Returns a stable per-monitor path for the scaled temp JPEG.
+    // Using a fixed path (not a GUID) means we overwrite rather than delete-and-recreate,
+    // which avoids a race where DWM reads the file asynchronously after SetWallpaper returns.
+    private static string GetStableTempPath(string? monitorDevicePath)
+    {
+        // Hash the device path so multi-monitor setups get separate files.
+        string suffix = monitorDevicePath is null
+            ? "all"
+            : ((uint)monitorDevicePath.GetHashCode()).ToString("X8");
+        return Path.Combine(ScaledTempDir, $"wallpaper_{suffix}.jpg");
+    }
+
     // Tracks monitors for which GetMonitorRECT has already logged a warning,
     // so the known Windows 11 E_FAIL is only reported once per session.
     private readonly HashSet<uint> _rectWarnedMonitors = [];
@@ -113,54 +125,47 @@ public class WallpaperService
     {
         AppLogger.Info($"SetWallpaper → monitor={monitorDevicePath ?? "all"} fit={fit} path={imagePath}");
 
-        string effectivePath = imagePath;
-        string? tempPath = null;
+        // Scale oversized images into a stable per-monitor temp file before handing the
+        // path to Windows.  IDesktopWallpaper.SetWallpaper is an IPC call into dwm.exe,
+        // which returns as soon as the path is registered — DWM reads and renders the file
+        // asynchronously afterwards.  Deleting (or reusing a GUID temp file) immediately
+        // after the COM call races with DWM's file read and produces a partially-painted or
+        // blank wallpaper.  Using a stable path (overwritten rather than deleted) means the
+        // file always exists when DWM comes to read it.
+        string stableTempPath = GetStableTempPath(monitorDevicePath);
+        bool scaled = TryScaleOversized(imagePath, stableTempPath) is not null;
+        string effectivePath = scaled ? stableTempPath : imagePath;
+        if (scaled)
+            AppLogger.Info($"SetWallpaper: scaled oversized image to temp → {stableTempPath}");
+
+        var wallpaper = (IDesktopWallpaper)new DesktopWallpaperClass();
         try
         {
-            // Scale oversized images down before passing to Windows.  The IDesktopWallpaper
-            // COM API calls SetWallpaper synchronously — Windows has finished reading the file
-            // before the call returns — so the temp file can be deleted immediately afterwards.
-            tempPath = TryScaleOversized(imagePath);
-            if (tempPath is not null)
-            {
-                effectivePath = tempPath;
-                AppLogger.Info($"SetWallpaper: scaled oversized image to temp → {tempPath}");
-            }
-
-            var wallpaper = (IDesktopWallpaper)new DesktopWallpaperClass();
-            try
-            {
-                wallpaper.SetWallpaper(monitorDevicePath, effectivePath);
-                wallpaper.SetPosition(ToDesktopPosition(fit));
-                AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
-            }
-            catch (COMException ex)
-            {
-                AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
-                throw;
-            }
-            finally
-            {
-                Marshal.ReleaseComObject(wallpaper);
-            }
+            wallpaper.SetWallpaper(monitorDevicePath, effectivePath);
+            wallpaper.SetPosition(ToDesktopPosition(fit));
+            AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
+        }
+        catch (COMException ex)
+        {
+            AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
+            throw;
         }
         finally
         {
-            if (tempPath is not null)
-                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+            Marshal.ReleaseComObject(wallpaper);
         }
     }
 
     /// <summary>
     /// If <paramref name="imagePath"/> has a dimension exceeding <see cref="MaxWallpaperDimension"/>,
-    /// writes a uniformly scaled JPEG to a unique temp file and returns its path.
-    /// Returns null when the image is within the limit (no temp file is created).
+    /// writes a uniformly scaled JPEG to <paramref name="destPath"/> and returns <paramref name="destPath"/>.
+    /// Returns null when the image is within the limit (no file is written).
     /// </summary>
-    private static string? TryScaleOversized(string imagePath)
+    private static string? TryScaleOversized(string imagePath, string destPath)
     {
         // HEIC/HEIF requires WIC since ImageSharp has no HEIC codec.
         if (WicHelper.IsHeic(imagePath))
-            return TryScaleOversizedViaWic(imagePath);
+            return TryScaleOversizedViaWic(imagePath, destPath);
 
         ImageInfo? info;
         try { info = Image.Identify(imagePath); }
@@ -182,7 +187,6 @@ public class WallpaperService
         AppLogger.Info($"SetWallpaper: image {info.Width}×{info.Height} exceeds {MaxWallpaperDimension}px limit; scaling to {targetW}×{targetH}");
 
         Directory.CreateDirectory(ScaledTempDir);
-        string tempPath = Path.Combine(ScaledTempDir, $"wallpaper_{Guid.NewGuid():N}.jpg");
 
         // TargetSize tells the JPEG decoder to apply DCT subsampling, avoiding allocation
         // of the full source resolution before resizing (halves peak RAM for a 16K→8K JPEG).
@@ -191,15 +195,15 @@ public class WallpaperService
         var opts = new DecoderOptions { TargetSize = new Size(targetW, targetH) };
         using var img = Image.Load<Rgb24>(opts, imagePath);
         img.Mutate(x => x.Resize(targetW, targetH, KnownResamplers.Lanczos3));
-        img.Save(tempPath, new JpegEncoder { Quality = 95 });
+        img.Save(destPath, new JpegEncoder { Quality = 95 });
 
-        return tempPath;
+        return destPath;
     }
 
     /// <summary>
     /// Variant of <see cref="TryScaleOversized"/> for HEIC/HEIF files, which require WIC decoding.
     /// </summary>
-    private static string? TryScaleOversizedViaWic(string imagePath)
+    private static string? TryScaleOversizedViaWic(string imagePath, string destPath)
     {
         int w, h;
         try { (w, h) = WicHelper.GetDimensions(imagePath); }
@@ -221,17 +225,15 @@ public class WallpaperService
         AppLogger.Info($"SetWallpaper: HEIC image {w}×{h} exceeds {MaxWallpaperDimension}px limit; scaling to {targetW}×{targetH}");
 
         Directory.CreateDirectory(ScaledTempDir);
-        string tempPath = Path.Combine(ScaledTempDir, $"wallpaper_{Guid.NewGuid():N}.jpg");
 
         try
         {
-            WicHelper.DecodeResizeSaveAsJpeg(imagePath, targetW, targetH, tempPath, quality: 95);
-            return tempPath;
+            WicHelper.DecodeResizeSaveAsJpeg(imagePath, targetW, targetH, destPath, quality: 95);
+            return destPath;
         }
         catch (Exception ex)
         {
             AppLogger.Warn($"SetWallpaper: WIC scale failed for '{imagePath}': {ex.Message}");
-            try { File.Delete(tempPath); } catch { }
             return null;
         }
     }

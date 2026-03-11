@@ -59,7 +59,7 @@ public sealed class LockScreenEngine : IDisposable
             return;
         }
 
-        var files = Directory.GetFiles(folder, "*", SearchOption.TopDirectoryOnly)
+        var files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories)
             .Where(f => SupportedExtensions.Contains(Path.GetExtension(f)))
             .ToList();
 
