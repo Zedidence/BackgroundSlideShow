@@ -50,6 +50,9 @@
                     <Button x:Name="GifBtn" Content="GIF Mode" Style="{StaticResource NavButton}"
                             Click="GifMode_Click"
                             ToolTip="Play animated GIFs as live desktop wallpaper"/>
+                    <Button x:Name="LockScreenBtn" Content="Lock Screen" Style="{StaticResource NavButton}"
+                            Click="LockScreen_Click"
+                            ToolTip="Set a custom Windows lock screen image"/>
                     <Button Content="Settings" Style="{StaticResource NavButton}" Click="ShowSettings_Click"/>
                 </StackPanel>
                 <!-- Divider between nav tabs and right-side actions -->
@@ -247,6 +250,11 @@
                 <local:GifPlayerView x:Name="GifPanel" Grid.Row="2"
                                      DataContext="{Binding GifPlayer}"
                                      Visibility="Collapsed"/>
+
+                <!-- Lock Screen — shown when user clicks Lock Screen, hidden otherwise -->
+                <local:LockScreenView x:Name="LockScreenPanel" Grid.Row="2"
+                                      DataContext="{Binding LockScreen}"
+                                      Visibility="Collapsed"/>
 
             </Grid>
         </Grid>

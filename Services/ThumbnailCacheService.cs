@@ -89,33 +89,46 @@ public static class ThumbnailCacheService
     public static async Task GenerateAsync(string imagePath)
     {
         var thumbPath = GetCachePath(imagePath);
-        if (File.Exists(thumbPath)) return;
+        // Check the in-memory index first — avoids disk I/O on the common repeat-call path.
+        if (_knownCached.ContainsKey(thumbPath)) return;
+        if (File.Exists(thumbPath)) { _knownCached.TryAdd(thumbPath, 0); return; }
 
         try
         {
             Directory.CreateDirectory(CacheDir);
 
-            // TargetSize tells the JPEG decoder to use hardware DCT scaling so it only
-            // allocates memory proportional to the output size, not the full source image.
-            // For non-JPEG formats (PNG, WebP, BMP) the TargetSize hint is ignored and the
-            // full image is decoded. Loading as Rgb24 instead of the default Rgba32 reduces
-            // peak memory by ~25% (3 bytes/px vs 4) — e.g. ~345 MB vs ~460 MB for 12K PNG.
-            var opts = new DecoderOptions
+            if (WicHelper.IsHeic(imagePath))
             {
-                TargetSize = new Size(MaxThumbDimension, MaxThumbDimension),
-            };
-            using var image = await Image.LoadAsync<Rgb24>(opts, imagePath);
-
-            if (image.Width > MaxThumbDimension || image.Height > MaxThumbDimension)
+                // HEIC requires WIC since ImageSharp has no HEIC codec.
+                // FitResizeSaveAsJpeg runs on a short-lived STA thread internally.
+                await Task.Run(() =>
+                    WicHelper.FitResizeSaveAsJpeg(imagePath, MaxThumbDimension, thumbPath, quality: 80));
+            }
+            else
             {
-                image.Mutate(x => x.Resize(new ResizeOptions
+                // TargetSize tells the JPEG decoder to use hardware DCT scaling so it only
+                // allocates memory proportional to the output size, not the full source image.
+                // For non-JPEG formats (PNG, WebP, BMP) the TargetSize hint is ignored and the
+                // full image is decoded. Loading as Rgb24 instead of the default Rgba32 reduces
+                // peak memory by ~25% (3 bytes/px vs 4) — e.g. ~345 MB vs ~460 MB for 12K PNG.
+                var opts = new DecoderOptions
                 {
-                    Size = new Size(MaxThumbDimension, MaxThumbDimension),
-                    Mode = ResizeMode.Max,
-                }));
+                    TargetSize = new Size(MaxThumbDimension, MaxThumbDimension),
+                };
+                using var image = await Image.LoadAsync<Rgb24>(opts, imagePath);
+
+                if (image.Width > MaxThumbDimension || image.Height > MaxThumbDimension)
+                {
+                    image.Mutate(x => x.Resize(new ResizeOptions
+                    {
+                        Size = new Size(MaxThumbDimension, MaxThumbDimension),
+                        Mode = ResizeMode.Max,
+                    }));
+                }
+
+                await image.SaveAsJpegAsync(thumbPath, new JpegEncoder { Quality = 80 });
             }
 
-            await image.SaveAsJpegAsync(thumbPath, new JpegEncoder { Quality = 80 });
             _knownCached.TryAdd(thumbPath, 0);
         }
         catch (Exception ex)

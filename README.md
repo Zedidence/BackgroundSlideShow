@@ -16,16 +16,17 @@ Built with C# (.NET 8) and WPF. Uses the `IDesktopWallpaper` COM interface — t
 - **Image exclusion** — right-click any image to exclude it from slideshows; shown with a dimmed ✕ badge
 - **Flexible intervals** — from seconds to hours, configured per monitor
 - **Random or sequential** ordering with a 50-image history buffer to reduce repeats
+- **Lock Screen Slideshow** — dedicated tab rotates your Windows lock screen image on a configurable interval (1–120 minutes) from a folder you choose; runs in the background while the app is in the tray
 - **System tray** — runs silently in the background; right-click for quick controls (Pause All, Resume All, Stop All)
 - **Persistent settings** — all configuration stored in SQLite; survives restarts with no re-setup
 
-**Supported image formats:** JPEG, PNG, WebP, BMP
+**Supported image formats:** JPEG, PNG, WebP, BMP, HEIC/HEIF
 
 ---
 
 ## Requirements
 
-- Windows 10 (1903+) or Windows 11
+- Windows 10 (1809 / build 17763+) or Windows 11
 - [.NET 8 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) (or SDK if building from source)
 
 ---
@@ -64,6 +65,12 @@ See [docs/quickstartguide.md](docs/quickstartguide.md) for a full walkthrough of
 │    ├── LibraryService        (folder index, SQLite)  │
 │    └── WallpaperService      (IDesktopWallpaper COM) │
 └──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│  LockScreenEngine  (interval timer, shuffled deck)   │
+│    │                                                  │
+│    └── LockScreenService  (WinRT LockScreen API)     │
+└──────────────────────────────────────────────────────┘
 ```
 
 - **`MonitorService`** — enumerates connected monitors via `EnumDisplayMonitors` (Win32 P/Invoke), returns handles, bounds, and orientation.
@@ -80,11 +87,13 @@ See [docs/quickstartguide.md](docs/quickstartguide.md) for a full walkthrough of
 BackgroundSlideShow/
 ├── Models/             # ImageEntry, LibraryFolder, MonitorConfig, ScanProgress, SlideshowState
 ├── Services/           # MonitorService, WallpaperService, LibraryService, ILibraryService,
-│                       # ImageSelectorService, ImagePoolFilter, SlideshowEngine, AppSettings
+│                       # ImageSelectorService, ImagePoolFilter, SlideshowEngine, AppSettings,
+│                       # LockScreenService, LockScreenEngine
 ├── ViewModels/         # MainViewModel, MonitorViewModel, LibraryViewModel,
-│                       # FolderListViewModel, FolderItemViewModel, ImageGalleryViewModel
+│                       # FolderListViewModel, FolderItemViewModel, ImageGalleryViewModel,
+│                       # LockScreenViewModel
 ├── Views/              # MainWindow, MonitorPanel, MonitorOverviewPanel,
-│                       # LibraryView, GalleryView, SettingsWindow
+│                       # LibraryView, GalleryView, LockScreenView, SettingsWindow
 ├── Data/               # AppDbContext (EF Core + SQLite)
 ├── TrayIcon/           # TrayIconManager
 ├── App.xaml / .cs      # Manual DI wiring, global exception hooks
@@ -102,7 +111,7 @@ BackgroundSlideShow/
 |---|---|---|
 | `Microsoft.EntityFrameworkCore.Sqlite` | 8.0.0 | Image library persistence |
 | `SixLabors.ImageSharp` | 3.1.12 | Read image dimensions without full decode |
-| `Hardcodet.NotifyIcon.Wpf` | 1.1.0 | System tray icon in WPF |
+| `H.NotifyIcon.Wpf` | 2.2.0 | System tray icon in WPF |
 | `CommunityToolkit.Mvvm` | 8.3.2 | MVVM source generators |
 
 ---

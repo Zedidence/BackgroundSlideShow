@@ -487,8 +487,58 @@ Addressed four issues blocking the app from working correctly as a standalone en
 The app could only be launched via `dotnet run` or on machines with .NET 8 already installed. There was no way to distribute a single `.exe` that a user could just double-click.
 **Fix:** Added `Properties/PublishProfiles/win-x64.pubxml` — self-contained, single-file publish profile for Windows x64. Bundles the .NET 8 runtime into the exe; no install required on the target machine.
 **Usage:** `dotnet publish -p:PublishProfile=win-x64`
-**Output:** `bin\Release\net8.0-windows\win-x64\publish\BackgroundSlideShow.exe` (~90–110 MB)
+**Output:** `publish\win-x64\BackgroundSlideShow.exe` (~90–110 MB)
 **Files:** `Properties/PublishProfiles/win-x64.pubxml` (new)
+
+---
+
+---
+
+## Features Added — 2026-03-11
+
+### Feature 1 — Lock Screen Slideshow tab
+**Status: Implemented**
+Added a dedicated **Lock Screen** tab to the top navigation bar that rotates the Windows lock screen image through images in a selected folder on a configurable interval (1–120 minutes).
+
+**Implementation:**
+- `LockScreenService` — thin wrapper around the WinRT `Windows.System.UserProfile.LockScreen.SetImageFileAsync` API.
+- `LockScreenEngine` — interval timer using `System.Timers.Timer`; shuffles images from the selected folder into a deck, applies the first image immediately on Start, then advances on each tick. `NextAsync()` advances manually and restarts the interval. Fires `StateChanged` from the thread pool.
+- `LockScreenViewModel` — mirrors `GifPlayerViewModel`; exposes `FolderPath`, `IntervalMinutes`, `IsRunning`, `StatusText`; marshals `StateChanged` back to the UI thread via `Dispatcher.Invoke`.
+- `LockScreenView.xaml` — folder picker, minutes-per-image slider, Start/Stop/Next buttons, status box; identical dark style to GIF Mode.
+- `AppSettings` — added `LockScreenFolderPath` (default `""`) and `LockScreenIntervalMinutes` (default 30), persisted to `settings.json`.
+- `BackgroundSlideShow.csproj` — TFM updated from `net8.0-windows` to `net8.0-windows10.0.17763.0` to enable WinRT API access. Minimum supported Windows is now 10 build 17763 (version 1809).
+
+**Files:** `Services/LockScreenService.cs` (new), `Services/LockScreenEngine.cs` (new), `ViewModels/LockScreenViewModel.cs` (new), `Views/LockScreenView.xaml` (new), `Services/AppSettings.cs`, `ViewModels/MainViewModel.cs`, `App.xaml.cs`, `Views/MainWindow.xaml`, `Views/MainWindow.xaml.cs`, `BackgroundSlideShow.csproj`
+
+---
+
+### Feature 2 — Lock Screen Photo Collages
+**Status: Implemented**
+Added Windows-style photo collage compositing to the Lock Screen Slideshow. Every 4–8 single images (randomised, matching Windows' cadence) the engine composites multiple photos into one full-screen image before applying it — exactly as the built-in Windows lock screen slideshow does.
+
+**Collage layouts (mirroring Windows):**
+| Layout | Panels | Notes |
+|--------|--------|-------|
+| Two Vertical | 2 | Side-by-side 50 / 50 |
+| Two Horizontal | 2 | Stacked 50 / 50 |
+| Three Left | 3 | Large panel left, two stacked right (⅔ / ⅓ split) |
+| Three Right | 3 | Two stacked left, large panel right (⅓ / ⅔ split) |
+| Four Grid | 4 | 2 × 2 grid |
+
+Layout selection is weighted to favour two-panel splits (most common in Windows) with three-panel and four-panel options less frequent. Layouts are limited to those achievable with the available image count (e.g. if the folder has only 2 images, only two-panel layouts are offered). Each panel is cover-cropped (center anchor) to fill its cell exactly. A 2 px dark gap separates panels, matching Windows. Composited images are written to `%LOCALAPPDATA%\BackgroundSlideShow\lockscreen_collage.jpg` (overwritten each time).
+
+A **Enable photo collages** checkbox in the Lock Screen tab lets the user opt out. The setting persists in `settings.json`.
+
+HEIC/HEIF source images are decoded via the existing `WicHelper` STA pipeline to a temporary JPEG before ImageSharp loads them, so all formats supported by the slideshow are also supported in collages.
+
+**Implementation:**
+- `CollageComposer` (new) — static service; `PickLayout`, `ImagesNeeded`, `Compose`, and `GetCells` helpers; uses ImageSharp `ResizeMode.Crop` for cover-cropping.
+- `LockScreenEngine` — added `_collageCountdown`, `NextCollageCountdown()`, `BuildCollageAsync()`; `ApplyCurrentAsync` now checks the countdown and routes to collage or single image. `GetScreenSize()` via `user32.dll!GetSystemMetrics` provides the canvas resolution.
+- `AppSettings` — added `LockScreenCollageEnabled` (default `true`), persisted in `SettingsData`.
+- `LockScreenViewModel` — exposed `CollageEnabled` passthrough property.
+- `LockScreenView.xaml` — added checkbox bound to `CollageEnabled`.
+
+**Files:** `Services/CollageComposer.cs` (new), `Services/LockScreenEngine.cs`, `Services/AppSettings.cs`, `ViewModels/LockScreenViewModel.cs`, `Views/LockScreenView.xaml`
 
 ---
 
@@ -504,3 +554,4 @@ The app could only be launched via `dotnet run` or on machines with .NET 8 alrea
 | Code Quality Perf | 2 | 2 | 0 |
 | Code Quality Arch | 4 | 4 | 0 |
 | Distribution & Polish | 4 | 4 | 0 |
+| Features | 2 | 2 | 0 |

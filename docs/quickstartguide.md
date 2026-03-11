@@ -4,7 +4,7 @@
 
 | Requirement | Minimum |
 |---|---|
-| Windows | 10 (version 1903+) or Windows 11 |
+| Windows | 10 (version 1809 / build 17763+) or Windows 11 |
 | Architecture | x64 |
 | .NET Runtime | 8.0 (not needed for the standalone `.exe`) |
 | Monitors | 1 (multi-monitor supported) |
@@ -24,8 +24,10 @@ dotnet publish -p:PublishProfile=win-x64
 This produces a single `BackgroundSlideShow.exe` at:
 
 ```
-bin\Release\net8.0-windows\win-x64\publish\BackgroundSlideShow.exe
+publish\win-x64\BackgroundSlideShow.exe
 ```
+
+(in the repo root folder, one level above the project folder)
 
 Copy that file anywhere and double-click to run. No .NET install required on the target machine.
 
@@ -65,7 +67,7 @@ When the app opens, the left panel is your **Image Library**.
 2. Browse to one or more folders that contain your wallpaper images — you can select multiple folders at once in the dialog.
 3. The app scans each folder recursively and indexes all supported images.
 
-**Supported formats:** `.jpg` / `.jpeg`, `.png`, `.webp`, `.bmp`
+**Supported formats:** `.jpg` / `.jpeg`, `.png`, `.webp`, `.bmp`, `.heic` / `.heif`
 
 You can also **drag and drop** one or more folders directly onto the Library panel to add them in bulk.
 
@@ -133,6 +135,27 @@ To adjust or disable transitions:
 1. Click **Settings** in the top navigation bar.
 2. Toggle **Fade between wallpapers** on or off.
 3. Drag the **Fade duration** slider (200 ms – 1500 ms).
+
+---
+
+## Lock Screen Slideshow
+
+Click **Lock Screen** in the top navigation bar to set up a rotating lock screen background.
+
+| Control | Action |
+|---|---|
+| **Browse…** | Pick the folder containing images for the lock screen |
+| **Minutes per image** slider | How long each image stays on the lock screen (1–120 min) |
+| **Enable photo collages** checkbox | Periodically composite multiple photos into one image, like Windows does |
+| **▶ Start** | Shuffles the folder, sets the first image immediately, and starts the rotation timer |
+| **■ Stop** | Stops the rotation (the last applied image remains on the lock screen) |
+| **▶ (Next)** | Applies the next image right now and resets the interval |
+
+**How it works:** While the app is running (including minimized to the tray), the engine picks a new image from the folder every N minutes and applies it via the Windows `LockScreen` API. When you lock your PC, you see the most recently applied image — exactly like Windows' built-in lock screen slideshow, but using your own image library.
+
+**Photo collages:** With **Enable photo collages** turned on (the default), the engine mimics the Windows lock screen behaviour of occasionally stitching multiple photos together into a single full-screen collage. A collage appears roughly every 4–8 single images. Five layout styles are used — two side-by-side, two stacked, two three-panel variants, and a 2×2 grid — chosen at random each time with weighting similar to Windows.
+
+The folder path, interval, and collage preference are saved to `settings.json` and persist across restarts. The rotation does not automatically resume on restart — press **Start** again to re-enable it.
 
 ---
 

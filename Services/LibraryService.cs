@@ -11,7 +11,7 @@ namespace BackgroundSlideShow.Services;
 public class LibraryService : ILibraryService
 {
     private static readonly FrozenSet<string> SupportedExtensions =
-        new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp" }
+        new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".heif" }
             .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly AppDbContext _db;
@@ -66,6 +66,10 @@ public class LibraryService : ILibraryService
 
     public async Task RemoveAllFoldersAsync()
     {
+        // Dispose all watchers before removing the DB records.
+        foreach (var w in _watchers.Values) w.Dispose();
+        _watchers.Clear();
+
         var folders = await _db.LibraryFolders.ToListAsync();
         _db.LibraryFolders.RemoveRange(folders);
         await _db.SaveChangesAsync();
@@ -273,6 +277,10 @@ public class LibraryService : ILibraryService
 
     private static (int Width, int Height) ReadDimensions(string path)
     {
+        // HEIC/HEIF requires WIC since ImageSharp has no HEIC codec.
+        if (WicHelper.IsHeic(path))
+            return WicHelper.GetDimensions(path);
+
         var info = Image.Identify(path);
         return (info.Width, info.Height);
     }

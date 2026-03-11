@@ -2,6 +2,11 @@ using System.IO;
 using System.Runtime.InteropServices;
 using BackgroundSlideShow.Models;
 using BackgroundSlideShow;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace BackgroundSlideShow.Services;
 
@@ -79,6 +84,16 @@ public class WallpaperService
     [Guid("C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD")]
     private class DesktopWallpaperClass { }
 
+    // Images wider or taller than this pixel count may exceed the GPU's maximum
+    // texture dimension (commonly 8192 on mid-range hardware), causing Windows to
+    // silently ignore the SetWallpaper call.  Any image exceeding this threshold
+    // is scaled down to fit before being passed to the COM API.
+    private const int MaxWallpaperDimension = 8192;
+
+    // Temp directory for scaled-down wallpaper intermediates.
+    private static readonly string ScaledTempDir = Path.Combine(
+        Path.GetTempPath(), "BackgroundSlideShow");
+
     // Tracks monitors for which GetMonitorRECT has already logged a warning,
     // so the known Windows 11 E_FAIL is only reported once per session.
     private readonly HashSet<uint> _rectWarnedMonitors = [];
@@ -97,21 +112,127 @@ public class WallpaperService
     public void SetWallpaper(string? monitorDevicePath, string imagePath, FitMode fit = FitMode.Fill)
     {
         AppLogger.Info($"SetWallpaper → monitor={monitorDevicePath ?? "all"} fit={fit} path={imagePath}");
-        var wallpaper = (IDesktopWallpaper)new DesktopWallpaperClass();
+
+        string effectivePath = imagePath;
+        string? tempPath = null;
         try
         {
-            wallpaper.SetWallpaper(monitorDevicePath, imagePath);
-            wallpaper.SetPosition(ToDesktopPosition(fit));
-            AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
-        }
-        catch (COMException ex)
-        {
-            AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
-            throw;
+            // Scale oversized images down before passing to Windows.  The IDesktopWallpaper
+            // COM API calls SetWallpaper synchronously — Windows has finished reading the file
+            // before the call returns — so the temp file can be deleted immediately afterwards.
+            tempPath = TryScaleOversized(imagePath);
+            if (tempPath is not null)
+            {
+                effectivePath = tempPath;
+                AppLogger.Info($"SetWallpaper: scaled oversized image to temp → {tempPath}");
+            }
+
+            var wallpaper = (IDesktopWallpaper)new DesktopWallpaperClass();
+            try
+            {
+                wallpaper.SetWallpaper(monitorDevicePath, effectivePath);
+                wallpaper.SetPosition(ToDesktopPosition(fit));
+                AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
+            }
+            catch (COMException ex)
+            {
+                AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
+                throw;
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(wallpaper);
+            }
         }
         finally
         {
-            Marshal.ReleaseComObject(wallpaper);
+            if (tempPath is not null)
+                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    /// <summary>
+    /// If <paramref name="imagePath"/> has a dimension exceeding <see cref="MaxWallpaperDimension"/>,
+    /// writes a uniformly scaled JPEG to a unique temp file and returns its path.
+    /// Returns null when the image is within the limit (no temp file is created).
+    /// </summary>
+    private static string? TryScaleOversized(string imagePath)
+    {
+        // HEIC/HEIF requires WIC since ImageSharp has no HEIC codec.
+        if (WicHelper.IsHeic(imagePath))
+            return TryScaleOversizedViaWic(imagePath);
+
+        ImageInfo? info;
+        try { info = Image.Identify(imagePath); }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"SetWallpaper: could not identify dimensions of '{imagePath}': {ex.Message}");
+            return null; // proceed with original; let Windows decide
+        }
+
+        if (info.Width <= MaxWallpaperDimension && info.Height <= MaxWallpaperDimension)
+            return null;
+
+        double scale = Math.Min(
+            (double)MaxWallpaperDimension / info.Width,
+            (double)MaxWallpaperDimension / info.Height);
+        int targetW = Math.Max(1, (int)(info.Width  * scale));
+        int targetH = Math.Max(1, (int)(info.Height * scale));
+
+        AppLogger.Info($"SetWallpaper: image {info.Width}×{info.Height} exceeds {MaxWallpaperDimension}px limit; scaling to {targetW}×{targetH}");
+
+        Directory.CreateDirectory(ScaledTempDir);
+        string tempPath = Path.Combine(ScaledTempDir, $"wallpaper_{Guid.NewGuid():N}.jpg");
+
+        // TargetSize tells the JPEG decoder to apply DCT subsampling, avoiding allocation
+        // of the full source resolution before resizing (halves peak RAM for a 16K→8K JPEG).
+        // For PNG/WebP/BMP the hint is ignored, but Rgb24 (3 bytes/px) still saves ~25%
+        // compared to the default Rgba32 (4 bytes/px) — e.g. ~576 MB vs ~768 MB for 16K PNG.
+        var opts = new DecoderOptions { TargetSize = new Size(targetW, targetH) };
+        using var img = Image.Load<Rgb24>(opts, imagePath);
+        img.Mutate(x => x.Resize(targetW, targetH, KnownResamplers.Lanczos3));
+        img.Save(tempPath, new JpegEncoder { Quality = 95 });
+
+        return tempPath;
+    }
+
+    /// <summary>
+    /// Variant of <see cref="TryScaleOversized"/> for HEIC/HEIF files, which require WIC decoding.
+    /// </summary>
+    private static string? TryScaleOversizedViaWic(string imagePath)
+    {
+        int w, h;
+        try { (w, h) = WicHelper.GetDimensions(imagePath); }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"SetWallpaper: could not identify HEIC dimensions of '{imagePath}': {ex.Message}");
+            return null;
+        }
+
+        if (w <= MaxWallpaperDimension && h <= MaxWallpaperDimension)
+            return null;
+
+        double scale = Math.Min(
+            (double)MaxWallpaperDimension / w,
+            (double)MaxWallpaperDimension / h);
+        int targetW = Math.Max(1, (int)(w * scale));
+        int targetH = Math.Max(1, (int)(h * scale));
+
+        AppLogger.Info($"SetWallpaper: HEIC image {w}×{h} exceeds {MaxWallpaperDimension}px limit; scaling to {targetW}×{targetH}");
+
+        Directory.CreateDirectory(ScaledTempDir);
+        string tempPath = Path.Combine(ScaledTempDir, $"wallpaper_{Guid.NewGuid():N}.jpg");
+
+        try
+        {
+            WicHelper.DecodeResizeSaveAsJpeg(imagePath, targetW, targetH, tempPath, quality: 95);
+            return tempPath;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"SetWallpaper: WIC scale failed for '{imagePath}': {ex.Message}");
+            try { File.Delete(tempPath); } catch { }
+            return null;
         }
     }
 

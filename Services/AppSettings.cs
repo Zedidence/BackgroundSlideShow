@@ -38,6 +38,15 @@ public class AppSettings
     /// <summary>How many seconds to display each GIF before cycling to the next (3–120).</summary>
     public int GifSecondsPerFile { get; set; } = 15;
 
+    /// <summary>Folder containing images for the Lock Screen Slideshow.</summary>
+    public string LockScreenFolderPath { get; set; } = "";
+
+    /// <summary>How many minutes to display each lock screen image before cycling (1–120).</summary>
+    public int LockScreenIntervalMinutes { get; set; } = 30;
+
+    /// <summary>When true, a photo collage is shown periodically (every 4–8 images) like the Windows lock screen.</summary>
+    public bool LockScreenCollageEnabled { get; set; } = true;
+
     /// <summary>
     /// Gets or sets whether this app is registered to launch at Windows startup.
     /// Reads/writes the HKCU Run registry key directly (no caching).
@@ -69,11 +78,14 @@ public class AppSettings
             if (!File.Exists(SettingsPath)) return;
             var data = JsonSerializer.Deserialize<SettingsData>(File.ReadAllText(SettingsPath));
             if (data is null) return;
-            HasShownTrayHint     = data.HasShownTrayHint;
-            TransitionsEnabled   = data.TransitionsEnabled;
-            TransitionDurationMs = data.TransitionDurationMs;
-            GifFolderPath        = data.GifFolderPath;
-            GifSecondsPerFile    = data.GifSecondsPerFile;
+            HasShownTrayHint          = data.HasShownTrayHint;
+            TransitionsEnabled        = data.TransitionsEnabled;
+            TransitionDurationMs      = data.TransitionDurationMs;
+            GifFolderPath             = data.GifFolderPath;
+            GifSecondsPerFile         = data.GifSecondsPerFile;
+            LockScreenFolderPath      = data.LockScreenFolderPath;
+            LockScreenIntervalMinutes = data.LockScreenIntervalMinutes;
+            LockScreenCollageEnabled  = data.LockScreenCollageEnabled;
         }
         catch (Exception ex) { AppLogger.Warn($"Settings load failed — using defaults. {ex.Message}"); }
     }
@@ -86,11 +98,14 @@ public class AppSettings
             var json = JsonSerializer.Serialize(
                 new SettingsData
                 {
-                    HasShownTrayHint     = HasShownTrayHint,
-                    TransitionsEnabled   = TransitionsEnabled,
-                    TransitionDurationMs = TransitionDurationMs,
-                    GifFolderPath        = GifFolderPath,
-                    GifSecondsPerFile    = GifSecondsPerFile,
+                    HasShownTrayHint          = HasShownTrayHint,
+                    TransitionsEnabled        = TransitionsEnabled,
+                    TransitionDurationMs      = TransitionDurationMs,
+                    GifFolderPath             = GifFolderPath,
+                    GifSecondsPerFile         = GifSecondsPerFile,
+                    LockScreenFolderPath      = LockScreenFolderPath,
+                    LockScreenIntervalMinutes = LockScreenIntervalMinutes,
+                    LockScreenCollageEnabled  = LockScreenCollageEnabled,
                 },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
@@ -100,10 +115,13 @@ public class AppSettings
 
     private sealed class SettingsData
     {
-        public bool   HasShownTrayHint     { get; set; }
-        public bool   TransitionsEnabled   { get; set; } = true;
-        public int    TransitionDurationMs { get; set; } = 600;
-        public string GifFolderPath        { get; set; } = "";
-        public int    GifSecondsPerFile    { get; set; } = 15;
+        public bool   HasShownTrayHint          { get; set; }
+        public bool   TransitionsEnabled        { get; set; } = true;
+        public int    TransitionDurationMs      { get; set; } = 600;
+        public string GifFolderPath             { get; set; } = "";
+        public int    GifSecondsPerFile         { get; set; } = 15;
+        public string LockScreenFolderPath      { get; set; } = "";
+        public int    LockScreenIntervalMinutes { get; set; } = 30;
+        public bool   LockScreenCollageEnabled  { get; set; } = true;
     }
 }

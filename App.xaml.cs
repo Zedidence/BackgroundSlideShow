@@ -15,11 +15,14 @@ public partial class App : Application
     private AppDbContext? _db;
     private MonitorService? _monitorService;
     private WallpaperService? _wallpaperService;
+    private LockScreenService? _lockScreenService;
     private LibraryService? _libraryService;
     private ImageSelectorService? _imageSelector;
     private SlideshowEngine? _engine;
     private GifPlayerEngine? _gifEngine;
     private ViewModels.GifPlayerViewModel? _gifPlayerVm;
+    private LockScreenEngine? _lockScreenEngine;
+    private ViewModels.LockScreenViewModel? _lockScreenVm;
     private MainViewModel? _mainVm;
     private MainWindow? _mainWindow;
 
@@ -150,8 +153,13 @@ public partial class App : Application
             _gifEngine    = new GifPlayerEngine(_monitorService, _appSettings);
             _gifPlayerVm  = new ViewModels.GifPlayerViewModel(_gifEngine, _appSettings);
 
+            AppLogger.Info("Creating LockScreenEngine");
+            _lockScreenService = new LockScreenService();
+            _lockScreenEngine  = new LockScreenEngine(_lockScreenService, _appSettings);
+            _lockScreenVm      = new ViewModels.LockScreenViewModel(_lockScreenEngine, _appSettings);
+
             AppLogger.Info("Creating MainViewModel");
-            _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService, _gifPlayerVm);
+            _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService, _gifPlayerVm, _lockScreenVm);
 
             AppLogger.Info("Creating MainWindow");
             _mainWindow = new MainWindow(_mainVm, _appSettings);
@@ -187,6 +195,7 @@ public partial class App : Application
             tray.Dispose();
 
         _gifPlayerVm?.Dispose();
+        _lockScreenEngine?.Dispose();
         _engine?.Dispose();
         _libraryService?.Dispose();
         _db?.Dispose();

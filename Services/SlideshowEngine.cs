@@ -165,19 +165,23 @@ public class SlideshowEngine : IDisposable
             // Rebuild the shuffle deck when the image pool has changed or the deck is exhausted.
             if (state.PoolVersion != _poolVersion || state.DeckIndex >= state.ShuffleDeck.Count)
             {
-                var lastPath = state.SlideshowState.CurrentImage?.FilePath;
+                // Capture recently-shown images before discarding the old deck so they
+                // can be deferred to the back of the new deck, guaranteeing a fresh run
+                // before any near-repeats can occur at the deck boundary.
+                var recentPaths = CaptureRecentPaths(state);
 
                 state.ShuffleDeck = _imageSelector.BuildShuffledDeck(
                     images, state.Monitor, state.Config, state.AllowedFolderIds);
                 state.DeckIndex = 0;
                 state.PoolVersion = _poolVersion;
 
-                if (lastPath != null && state.ShuffleDeck.Count > 1
-                    && state.ShuffleDeck[0].FilePath.Equals(lastPath, StringComparison.OrdinalIgnoreCase))
+                // Push recently-seen images to the back half of the new deck.
+                // The front portion is guaranteed to be images not recently shown.
+                if (recentPaths.Count > 0 && state.ShuffleDeck.Count > recentPaths.Count)
                 {
-                    int swapIdx = Random.Shared.Next(1, state.ShuffleDeck.Count);
-                    (state.ShuffleDeck[0], state.ShuffleDeck[swapIdx]) =
-                        (state.ShuffleDeck[swapIdx], state.ShuffleDeck[0]);
+                    var front = state.ShuffleDeck.Where(e => !recentPaths.Contains(e.FilePath)).ToList();
+                    var back  = state.ShuffleDeck.Where(e =>  recentPaths.Contains(e.FilePath)).ToList();
+                    state.ShuffleDeck = [..front, ..back];
                 }
             }
 
@@ -254,10 +258,12 @@ public class SlideshowEngine : IDisposable
 
     private void RefreshImagePool()
     {
-        _poolRefreshCts?.Cancel();
-        _poolRefreshCts?.Dispose();
+        // Atomically replace the CTS so concurrent LibraryChanged events (which can fire
+        // from background watcher threads) never double-dispose the same CTS object.
         var cts = new CancellationTokenSource();
-        _poolRefreshCts = cts;
+        var prev = Interlocked.Exchange(ref _poolRefreshCts, cts);
+        prev?.Cancel();
+        prev?.Dispose();
 
         _ = Task.Run(async () =>
         {
@@ -286,15 +292,33 @@ public class SlideshowEngine : IDisposable
     public void Dispose()
     {
         _libraryService.LibraryChanged -= OnLibraryChanged;
-        _poolRefreshCts?.Cancel();
-        _poolRefreshCts?.Dispose();
-        _poolRefreshCts = null;
+        var cts = Interlocked.Exchange(ref _poolRefreshCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
         foreach (var s in _states.Values)
         {
             s.Timer?.Stop();
             s.Timer?.Dispose();
         }
         _states.Clear();
+    }
+
+    /// <summary>
+    /// Returns the file paths of the most recently shown images from the current deck
+    /// so they can be deferred to the back of the next shuffle pass.
+    /// Captures at most half the deck size, capped at 20, to keep the "fresh" zone large.
+    /// </summary>
+    private static HashSet<string> CaptureRecentPaths(PerMonitorState state)
+    {
+        const int MaxTail = 20;
+        int shown = state.DeckIndex; // number of images shown from the current deck
+        if (shown == 0 || state.ShuffleDeck.Count == 0) return [];
+
+        int tailCount = Math.Min(shown, Math.Min(state.ShuffleDeck.Count / 2, MaxTail));
+        int from = shown - tailCount;
+        return new HashSet<string>(
+            state.ShuffleDeck.GetRange(from, tailCount).Select(e => e.FilePath),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     // ── Nested types ──────────────────────────────────────────────────────────

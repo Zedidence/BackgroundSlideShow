@@ -22,21 +22,24 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private MonitorViewModel? _selectedMonitor;
 
-    public GifPlayerViewModel GifPlayer { get; }
+    public GifPlayerViewModel   GifPlayer  { get; }
+    public LockScreenViewModel  LockScreen { get; }
 
     public MainViewModel(
         AppDbContext db,
         MonitorService monitorService,
         SlideshowEngine engine,
         ILibraryService libraryService,
-        GifPlayerViewModel gifPlayer)
+        GifPlayerViewModel gifPlayer,
+        LockScreenViewModel lockScreen)
     {
         _db = db;
         _monitorService = monitorService;
         _engine = engine;
         _libraryService = libraryService;
         _library = new LibraryViewModel(libraryService);
-        GifPlayer = gifPlayer;
+        GifPlayer  = gifPlayer;
+        LockScreen = lockScreen;
 
         _engine.StateChanged += OnEngineStateChanged;
     }
