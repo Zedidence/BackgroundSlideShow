@@ -18,15 +18,16 @@ namespace BackgroundSlideShow.Views;
 ///   window is never visually transparent.  Avoiding WS_EX_LAYERED eliminates the
 ///   DWM full-recomposition pass (and resulting taskbar flash) that layered windows
 ///   trigger on create/destroy.
-/// • Z-order: HWND_BOTTOM (1) — placed below Progman.  On Windows 10/11 Progman's
-///   background is transparent (DWM composites the wallpaper below all HWNDs), so our
-///   transition is visible through Progman's transparent client area.  Icon child
-///   windows (SHELLDLL_DefView / SysListView32) stay above us — icons remain visible
-///   during the transition.  All app windows and the taskbar are above Progman and
-///   therefore also above us.
-/// • WM_WINDOWPOSCHANGING hook: WPF calls its own SetWindowPos during Show() to apply
-///   Left/Top/Width/Height, which would silently reset z-order back to the top.  We
-///   intercept that message and inject SWP_NOZORDER so our z-position is permanent.
+/// • Z-order: placed directly below the desktop icon layer (the top-level window
+///   containing SHELLDLL_DefView).  DesktopInterop sends the Progman 0x052C message
+///   on first use to ensure the desktop is in the transparent-composited hierarchy,
+///   so our window is visible through the DWM background.  Icons, taskbar, and all
+///   app windows remain above us.  Falls back to HWND_BOTTOM if the icon layer
+///   can't be found.
+/// • WM_WINDOWPOSCHANGING hook: WPF calls its own SetWindowPos during Show() to
+///   apply Left/Top/Width/Height, which would silently reset z-order, position, and
+///   size.  We intercept that message and inject SWP_NOZORDER | SWP_NOMOVE |
+///   SWP_NOSIZE so our placement is permanent.
 /// • EnsureHandle() must be called by the caller BEFORE Show() so OnSourceInitialized
 ///   fires (setting WS_EX_TOOLWINDOW + z-order) before the window is ever visible.
 ///
@@ -36,7 +37,7 @@ namespace BackgroundSlideShow.Views;
 ///   3. ContentRendered fires (first WPF frame composited to DWM).
 ///   4. Caller calls SetWallpaper externally.
 ///   5. Caller calls BeginFade() → OldImage opacity 1→0, revealing NewImage.
-///   6. Window self-closes when the animation completes.
+///   6. Window hides itself and self-closes when the animation completes.
 /// </summary>
 public partial class TransitionWindow : Window
 {
@@ -52,16 +53,18 @@ public partial class TransitionWindow : Window
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
-    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_NOSIZE     = 0x0001;
+    private const uint SWP_NOMOVE     = 0x0002;
     private const uint SWP_NOZORDER   = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
     private const int  GWL_EXSTYLE    = -20;
     private const int  WS_EX_NOACTIVATE     = 0x08000000;
     private const int  WS_EX_TOOLWINDOW     = 0x00000080;
     private const int  WM_WINDOWPOSCHANGING = 0x0046;
 
-    // HWND_BOTTOM (1): insert at the absolute bottom of the non-topmost z-order.
-    // On Windows 10/11 this places us below Progman whose background is DWM-transparent,
-    // so the transition is visible on the desktop while icons remain above us.
+    // HWND_BOTTOM (1): fallback z-order position when the desktop icon layer can't be
+    // found.  The preferred path uses DesktopInterop.FindDesktopIconLayer() to place us
+    // directly below the icon layer for reliable visibility on all Win10/11 builds.
     private static readonly IntPtr HWND_BOTTOM = new(1);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -76,7 +79,7 @@ public partial class TransitionWindow : Window
 
     private readonly Rect _monitorBounds;
     private readonly int  _durationMs;
-    private bool _zOrderLocked;
+    private bool _positionLocked;
     private bool _fadeStarted;
     private DispatcherTimer? _fallbackTimer;
 
@@ -181,29 +184,32 @@ public partial class TransitionWindow : Window
         int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
         SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
 
-        // Place at the absolute bottom of the non-topmost z-order.
-        SetWindowPos(hwnd, HWND_BOTTOM,
+        // Place directly below the desktop icon layer (the top-level window holding
+        // SHELLDLL_DefView).  DesktopInterop.EnsureInitialized sends the Progman 0x052C
+        // message on first call so the desktop is in the transparent-composited state
+        // where our window is visible through DWM.  Falls back to HWND_BOTTOM if the
+        // icon layer can't be found (e.g. custom shell replacements).
+        var iconLayer = Services.DesktopInterop.FindDesktopIconLayer();
+        var insertAfter = iconLayer != IntPtr.Zero ? iconLayer : HWND_BOTTOM;
+        SetWindowPos(hwnd, insertAfter,
             (int)_monitorBounds.Left, (int)_monitorBounds.Top,
             (int)_monitorBounds.Width, (int)_monitorBounds.Height,
             SWP_NOACTIVATE);
 
-        // Lock z-order: WPF will call SetWindowPos during Show() to apply
-        // Left/Top/Width/Height, implicitly resetting insertAfter to HWND_TOP.
-        // The hook injects SWP_NOZORDER into every subsequent WM_WINDOWPOSCHANGING
-        // so our HWND_BOTTOM position is never overridden.
-        _zOrderLocked = true;
+        // Lock everything: WPF calls SetWindowPos during Show() to apply its own
+        // Left/Top/Width/Height (DPI-scaled), which would silently reset z-order,
+        // position, and size.  The hook injects SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE
+        // into every subsequent WM_WINDOWPOSCHANGING so our placement is permanent.
+        _positionLocked = true;
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_WINDOWPOSCHANGING && _zOrderLocked)
+        if (msg == WM_WINDOWPOSCHANGING && _positionLocked)
         {
             var wp = Marshal.PtrToStructure<WINDOWPOS>(lParam);
-            if ((wp.flags & SWP_NOZORDER) == 0)
-            {
-                wp.flags |= SWP_NOZORDER;
-                Marshal.StructureToPtr(wp, lParam, false);
-            }
+            wp.flags |= SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE;
+            Marshal.StructureToPtr(wp, lParam, false);
         }
         return IntPtr.Zero;
     }
@@ -247,6 +253,10 @@ public partial class TransitionWindow : Window
             new Duration(TimeSpan.FromMilliseconds(_durationMs)));
         anim.Completed += (_, _) =>
         {
+            // Hide before closing to prevent a black-frame flash.  The new wallpaper
+            // is already set underneath, so hiding reveals it instantly with no gap.
+            _positionLocked = false;
+            Hide();
             OldImage.Source = null;
             NewImage.Source = null;
             Close();

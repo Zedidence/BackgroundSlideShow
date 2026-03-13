@@ -17,8 +17,8 @@
         is never needed. Avoiding WS_EX_LAYERED eliminates the DWM full-recomposition
         taskbar flash that layered windows cause on create/destroy.
         NewImage (bottom) stays opaque; OldImage (top) fades 1→0 to reveal it.
-        Positioned at HWND_BOTTOM — below Progman, whose background is DWM-transparent on
-        Win10/11, so the transition shows through while icons remain above us.
+        Positioned directly below the desktop icon layer via DesktopInterop, so the
+        transition shows through the DWM background while icons remain above us.
     -->
     <Grid>
         <Image x:Name="NewImage" Stretch="UniformToFill" IsHitTestVisible="False"/>
