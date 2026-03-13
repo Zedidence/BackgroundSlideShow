@@ -6,6 +6,8 @@
              Background="#1E1E1E">
 
     <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
         <!-- Small pill-shaped preset button for interval quick-sets -->
         <Style x:Key="PresetBtn" TargetType="Button">
             <Setter Property="Background" Value="#2D2D2D"/>
@@ -141,7 +143,7 @@
             </Grid>
 
             <!-- Fit mode -->
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="Fit Mode:" Foreground="#888" VerticalAlignment="Center" Width="90"/>
                 <ComboBox SelectedValue="{Binding Config.FitMode, Mode=TwoWay}"
                           SelectedValuePath="Tag" MinWidth="120">
@@ -156,6 +158,30 @@
                     <ComboBoxItem Content="Center"  Tag="{x:Static models:FitMode.Center}"
                                   ToolTip="Place image at its original size in the center of the screen"/>
                 </ComboBox>
+            </StackPanel>
+
+            <!-- Collage mode -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Width="90"/>
+                <CheckBox Content="Enable collages (3–6 photos per wallpaper)"
+                          IsChecked="{Binding Config.CollageEnabled, Mode=TwoWay}"
+                          Foreground="White" Cursor="Hand"
+                          ToolTip="Occasionally compose multiple images into a collage wallpaper"/>
+            </StackPanel>
+
+            <!-- Collage frequency (visible only when collages are enabled) -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,14"
+                        Visibility="{Binding Config.CollageEnabled, Converter={StaticResource BoolToVis}}">
+                <TextBlock Width="90"/>
+                <TextBlock Text="Frequency:" Foreground="#888" Width="72" VerticalAlignment="Center"/>
+                <Slider Minimum="10" Maximum="100" SmallChange="10" LargeChange="20"
+                        TickFrequency="10" IsSnapToTickEnabled="True"
+                        Value="{Binding Config.CollageChance, Mode=TwoWay}"
+                        Width="130" VerticalAlignment="Center"
+                        ToolTip="How often a wallpaper change produces a collage (10 % = rarely, 100 % = always)"/>
+                <TextBlock Foreground="#888" VerticalAlignment="Center" Margin="6,0,0,0">
+                    <Run Text="{Binding Config.CollageChance, Mode=OneWay}"/><Run Text="%"/>
+                </TextBlock>
             </StackPanel>
 
             <!-- ── CONTENT ──────────────────────────────────────────────────────── -->

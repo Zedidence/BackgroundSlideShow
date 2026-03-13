@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using Microsoft.Win32;
 using BackgroundSlideShow;
+using BackgroundSlideShow.Models;
 
 namespace BackgroundSlideShow.Services;
 
@@ -47,6 +48,9 @@ public class AppSettings
     /// <summary>When true, a photo collage is shown periodically (every 4–8 images) like the Windows lock screen.</summary>
     public bool LockScreenCollageEnabled { get; set; } = true;
 
+    /// <summary>How single lock screen images are framed on the canvas.</summary>
+    public FitMode LockScreenFitMode { get; set; } = FitMode.Fill;
+
     /// <summary>
     /// Gets or sets whether this app is registered to launch at Windows startup.
     /// Reads/writes the HKCU Run registry key directly (no caching).
@@ -86,6 +90,7 @@ public class AppSettings
             LockScreenFolderPath      = data.LockScreenFolderPath;
             LockScreenIntervalMinutes = data.LockScreenIntervalMinutes;
             LockScreenCollageEnabled  = data.LockScreenCollageEnabled;
+            LockScreenFitMode         = data.LockScreenFitMode;
         }
         catch (Exception ex) { AppLogger.Warn($"Settings load failed — using defaults. {ex.Message}"); }
     }
@@ -106,6 +111,7 @@ public class AppSettings
                     LockScreenFolderPath      = LockScreenFolderPath,
                     LockScreenIntervalMinutes = LockScreenIntervalMinutes,
                     LockScreenCollageEnabled  = LockScreenCollageEnabled,
+                    LockScreenFitMode         = LockScreenFitMode,
                 },
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
@@ -120,8 +126,9 @@ public class AppSettings
         public int    TransitionDurationMs      { get; set; } = 600;
         public string GifFolderPath             { get; set; } = "";
         public int    GifSecondsPerFile         { get; set; } = 15;
-        public string LockScreenFolderPath      { get; set; } = "";
-        public int    LockScreenIntervalMinutes { get; set; } = 30;
-        public bool   LockScreenCollageEnabled  { get; set; } = true;
+        public string  LockScreenFolderPath      { get; set; } = "";
+        public int     LockScreenIntervalMinutes { get; set; } = 30;
+        public bool    LockScreenCollageEnabled  { get; set; } = true;
+        public FitMode LockScreenFitMode         { get; set; } = FitMode.Fill;
     }
 }

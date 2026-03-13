@@ -84,8 +84,13 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
         _countdownTimer.Start();
     }
 
-    private async void OnLibraryChanged(object? sender, EventArgs e) =>
-        await LoadFolderAssignmentsAsync();
+    // Bug 5 fix: exceptions from async void propagate to AppDomain.UnhandledException
+    // with no useful context.  Catch and log explicitly so the VM's state remains consistent.
+    private async void OnLibraryChanged(object? sender, EventArgs e)
+    {
+        try { await LoadFolderAssignmentsAsync(); }
+        catch (Exception ex) { AppLogger.Error("MonitorViewModel: failed to reload folder assignments", ex); }
+    }
 
     // ── Folder assignment helpers ──────────────────────────────────────────────
 

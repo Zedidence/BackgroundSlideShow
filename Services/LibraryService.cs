@@ -393,6 +393,15 @@ public class LibraryService : ILibraryService
                 try
                 {
                     await Task.Delay(500, cts.Token);
+
+                    // Bug 7 fix: RemoveFolderAsync disposes the watcher (preventing new events)
+                    // but a task already in the 500ms delay will still reach here.  If the folder
+                    // is no longer registered, skip the scan to avoid touching a deleted DB entity.
+                    lock (_fileEventDebounce)
+                    {
+                        if (!_watchers.ContainsKey(folder.Path)) return;
+                    }
+
                     await _scanSemaphore.WaitAsync(cts.Token);
                     try
                     {

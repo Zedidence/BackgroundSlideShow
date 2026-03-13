@@ -37,6 +37,21 @@ public class MonitorConfig : INotifyPropertyChanged
     private FitMode _fitMode = FitMode.Fill;
     public FitMode FitMode { get => _fitMode; set { _fitMode = value; Notify(); } }
 
+    private bool _collageEnabled = false;
+    public bool CollageEnabled { get => _collageEnabled; set { _collageEnabled = value; Notify(); } }
+
+    /// <summary>
+    /// Probability (0–100) that a given wallpaper change produces a collage instead of a
+    /// single image. Only meaningful when <see cref="CollageEnabled"/> is true.
+    /// Default is 30 (≈ one collage every three slides).
+    /// </summary>
+    private int _collageChance = 30;
+    public int CollageChance
+    {
+        get => _collageChance;
+        set { _collageChance = Math.Clamp(value, 0, 100); Notify(); }
+    }
+
     /// <summary>Controls which orientation of images are eligible for this monitor.</summary>
     private ImagePoolMode _imagePoolMode = ImagePoolMode.Smart;
     public ImagePoolMode ImagePoolMode { get => _imagePoolMode; set { _imagePoolMode = value; Notify(); } }

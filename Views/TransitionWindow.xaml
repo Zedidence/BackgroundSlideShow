@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
+        AllowsTransparency="False"
+        Background="Black"
         ShowInTaskbar="False"
         ShowActivated="False"
         Topmost="False"
@@ -12,10 +12,17 @@
         WindowStartupLocation="Manual">
 
     <!--
-        Full-screen overlay that covers one monitor with the OLD wallpaper image.
-        Sequence: Show overlay → block until first frame composited → SetWallpaper
-        (new image set underneath) → BeginFade() → opacity 1→0 reveals the new wallpaper.
+        Full-screen overlay for crossfading between two wallpapers.
+        AllowsTransparency=False: NewImage always covers the full window, so transparency
+        is never needed. Avoiding WS_EX_LAYERED eliminates the DWM full-recomposition
+        taskbar flash that layered windows cause on create/destroy.
+        NewImage (bottom) stays opaque; OldImage (top) fades 1→0 to reveal it.
+        Positioned at HWND_BOTTOM — below Progman, whose background is DWM-transparent on
+        Win10/11, so the transition shows through while icons remain above us.
     -->
-    <Image x:Name="OldImage" Stretch="UniformToFill" IsHitTestVisible="False"/>
+    <Grid>
+        <Image x:Name="NewImage" Stretch="UniformToFill" IsHitTestVisible="False"/>
+        <Image x:Name="OldImage" Stretch="UniformToFill" IsHitTestVisible="False"/>
+    </Grid>
 
 </Window>

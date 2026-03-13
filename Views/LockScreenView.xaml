@@ -1,6 +1,7 @@
 <UserControl x:Class="BackgroundSlideShow.Views.LockScreenView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:BackgroundSlideShow.Models"
              Background="#1E1E1E">
 
     <UserControl.Resources>
@@ -71,8 +72,28 @@
                         Margin="0,0,8,0"/>
             </DockPanel>
 
+            <!-- ── Image framing ── -->
+            <TextBlock Text="IMAGE FRAMING" Foreground="#666" FontSize="10"
+                       FontWeight="SemiBold" Margin="0,0,0,6"/>
+            <ComboBox SelectedValue="{Binding FitMode, Mode=TwoWay}"
+                      SelectedValuePath="Tag"
+                      Background="#2D2D2D" Foreground="White"
+                      BorderBrush="#444" FontSize="12"
+                      Margin="0,0,0,22" Width="220" HorizontalAlignment="Left">
+                <ComboBoxItem Content="Fill (cover-crop)"  Tag="{x:Static models:FitMode.Fill}"
+                              ToolTip="Scale to fill; edges are cropped"/>
+                <ComboBoxItem Content="Fit (letterbox)"    Tag="{x:Static models:FitMode.Fit}"
+                              ToolTip="Scale to fit within screen; black bars fill the rest"/>
+                <ComboBoxItem Content="Stretch"            Tag="{x:Static models:FitMode.Stretch}"
+                              ToolTip="Stretch to fill exactly, ignoring aspect ratio"/>
+                <ComboBoxItem Content="Center"             Tag="{x:Static models:FitMode.Center}"
+                              ToolTip="Show at native size centered; scale down only if too large"/>
+                <ComboBoxItem Content="Tile"               Tag="{x:Static models:FitMode.Tile}"
+                              ToolTip="Tile image repeatedly across the screen"/>
+            </ComboBox>
+
             <!-- ── Collage toggle ── -->
-            <CheckBox Content="Enable photo collages (like Windows — shown every 4–8 images)"
+            <CheckBox Content="Enable photo collages (shown every 4–8 images, requires 3+ images)"
                       IsChecked="{Binding CollageEnabled, Mode=TwoWay}"
                       Foreground="#AAAAAA" FontSize="12" Margin="0,0,0,22"
                       Cursor="Hand"/>

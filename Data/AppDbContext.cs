@@ -69,6 +69,10 @@ public class AppDbContext : DbContext
             await AddColumnIfMissingAsync(conn2, "MonitorConfigs", "ImagePoolMode", "INTEGER NOT NULL DEFAULT 3");
             // FolderAssignmentMode: 0 = All (default), 1 = Selected.
             await AddColumnIfMissingAsync(conn2, "MonitorConfigs", "FolderAssignmentMode", "INTEGER NOT NULL DEFAULT 0");
+            // CollageEnabled: 0 = disabled (default), 1 = enabled.
+            await AddColumnIfMissingAsync(conn2, "MonitorConfigs", "CollageEnabled", "INTEGER NOT NULL DEFAULT 0");
+            // CollageChance: 0–100 probability of collage per slide. Default 30 (≈ 1-in-3).
+            await AddColumnIfMissingAsync(conn2, "MonitorConfigs", "CollageChance", "INTEGER NOT NULL DEFAULT 30");
 
             // Create the MonitorFolderAssignments join table for existing databases.
             await using var createTable = conn2.CreateCommand();

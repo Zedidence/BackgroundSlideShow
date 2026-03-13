@@ -15,18 +15,20 @@ public class SlideshowEngine : IDisposable
 
     // Per-monitor state — ConcurrentDictionary for thread-safe access from UI + timer threads
     private readonly ConcurrentDictionary<string, PerMonitorState> _states = new();
+    private readonly Random _rng = new();
 
     public event EventHandler<SlideshowStateChangedEventArgs>? StateChanged;
 
     /// <summary>
     /// Optional delegate invoked on the UI thread when a wallpaper is about to change.
-    /// Receives (oldImagePath, monitorBounds, durationMs, fitMode).
+    /// Receives (oldImagePath, newImagePath, monitorBounds, durationMs, fitMode).
     /// Must block until the overlay window's first frame is composited, then return an
-    /// Action that starts the fade animation.  The engine calls the returned Action AFTER
-    /// SetWallpaper so the reveal always exposes the new image.
+    /// Action that starts the crossfade animation.  The engine calls the returned Action
+    /// AFTER SetWallpaper so the actual wallpaper is consistent with the overlay's NewImage
+    /// by the time the fade completes.
     /// Wired up in App.xaml.cs so the engine stays decoupled from WPF windows.
     /// </summary>
-    public Func<string, System.Windows.Rect, int, Models.FitMode, Action>? ShowTransitionOverlay { get; set; }
+    public Func<string, string, System.Windows.Rect, int, Models.FitMode, Action>? ShowTransitionOverlay { get; set; }
 
     public SlideshowEngine(
         MonitorService monitorService,
@@ -124,8 +126,14 @@ public class SlideshowEngine : IDisposable
     /// <summary>Updates the timer interval live when the user changes IntervalSeconds while a slideshow is running.</summary>
     public void UpdateConfig(MonitorConfig config)
     {
-        if (_states.TryGetValue(config.MonitorId, out var state) && state.Timer is not null)
-            state.Timer.Interval = config.IntervalSeconds * 1000.0;
+        if (!_states.TryGetValue(config.MonitorId, out var state) || state.Timer is null) return;
+
+        // Bug 2 fix: setting Interval resets the internal timer countdown, but NextChangeAt
+        // is never updated here — the countdown display shows stale remaining time until the
+        // next tick fires AdvanceMonitor.  Update it now so the UI is immediately correct.
+        state.Timer.Interval = config.IntervalSeconds * 1000.0;
+        state.SlideshowState.NextChangeAt = DateTime.UtcNow.AddSeconds(config.IntervalSeconds);
+        RaiseStateChanged(state.SlideshowState);
     }
 
     /// <summary>
@@ -156,6 +164,8 @@ public class SlideshowEngine : IDisposable
         System.Windows.Rect transitionBounds = default;
         int transitionDuration = 0;
         Models.FitMode transitionFitMode = Models.FitMode.Fill;
+        List<string>? collageImages = null;
+        CollageLayout collageLayout = default;
 
         lock (state.AdvanceLock)
         {
@@ -187,7 +197,34 @@ public class SlideshowEngine : IDisposable
 
             if (state.ShuffleDeck.Count == 0) return;
 
-            next = state.ShuffleDeck[state.DeckIndex++];
+            // ShuffleDeck was built by BuildShuffledDeck → FilterWithFallback, so all images
+            // in the deck (and therefore all collage panels) already respect the monitor's
+            // smart orientation / aspect-ratio filter — no separate filtering needed here.
+            //
+            // Never produce two collages back-to-back: if the previous slide was a collage,
+            // force a single image this time regardless of the chance roll.
+            bool doCollage = state.Config.CollageEnabled
+                && state.ShuffleDeck.Count >= 3
+                && !state.LastWasCollage
+                && _rng.Next(100) < state.Config.CollageChance;
+
+            state.LastWasCollage = doCollage;
+
+            if (doCollage)
+            {
+                collageLayout = CollageComposer.PickLayout(state.ShuffleDeck.Count, _rng);
+                int needed = CollageComposer.ImagesNeeded(collageLayout);
+                collageImages = Enumerable.Range(0, needed)
+                    .Select(i => state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count].FilePath)
+                    .ToList();
+                next = state.ShuffleDeck[state.DeckIndex];
+                // Advance by needed; cap at deck size so CaptureRecentPaths stays in bounds.
+                state.DeckIndex = Math.Min(state.DeckIndex + needed, state.ShuffleDeck.Count);
+            }
+            else
+            {
+                next = state.ShuffleDeck[state.DeckIndex++];
+            }
 
             if (string.IsNullOrEmpty(state.Monitor.WallpaperDevicePath))
             {
@@ -211,36 +248,62 @@ public class SlideshowEngine : IDisposable
 
         // Correct transition sequence (outside the lock — no deadlock risk):
         //
-        //  1. Invoke (synchronous) → ShowTransitionOverlay creates the overlay window,
-        //     then BLOCKS via Dispatcher.PushFrame until the first frame is composited.
-        //     This guarantees the overlay is visible before we touch the wallpaper.
+        //  1. Compose collage if needed — we need the final wallpaper path before showing
+        //     the overlay so both old and new images can be loaded into it upfront.
         //
-        //  2. SetWallpaper — safe to call now because the overlay covers the desktop.
+        //  2. Invoke (synchronous) → ShowTransitionOverlay creates the overlay window with
+        //     both images loaded, then BLOCKS via Dispatcher.PushFrame until the first frame
+        //     is composited.  The overlay is visible before we touch the actual wallpaper.
         //
-        //  3. Invoke → BeginFade() starts the opacity animation, revealing the new image.
+        //  3. SetWallpaper — safe to call now because the overlay covers the desktop.
+        //
+        //  4. Invoke → BeginFade() starts the crossfade animation (OldImage opacity 1→0,
+        //     NewImage already at full opacity below), revealing the new wallpaper.
         //
         // Using Invoke (not InvokeAsync) is safe here because the lock is already released.
-        // If the UI thread is blocked on AdvanceLock (e.g. during a Skip), the lock is
-        // released before we reach this point, so no deadlock can occur.
 
+        // Step 1 — resolve the final wallpaper path (compose collage if needed).
+        string wallpaperPath = next!.FilePath;
+        if (collageImages is not null)
+        {
+            try
+            {
+                int canvasW = (int)state.Monitor.Bounds.Width;
+                int canvasH = (int)state.Monitor.Bounds.Height;
+                if (canvasW <= 0 || canvasH <= 0) { canvasW = 1920; canvasH = 1080; }
+                var tempPath = GetCollageTempPath(state.Monitor.DeviceId);
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(tempPath)!);
+                CollageComposer.Compose(collageLayout, collageImages, canvasW, canvasH, tempPath);
+                wallpaperPath = tempPath;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"Wallpaper collage composition failed for {state.Monitor.DeviceId}", ex);
+                // Fall through — wallpaperPath stays as the single image.
+            }
+        }
+
+        // Step 2 — show the overlay (blocks until first frame composited).
         Action? beginFade = null;
         if (shouldTransition)
         {
-            var oldPath  = oldImagePath!;
-            var bounds   = transitionBounds;
-            var duration = transitionDuration;
-            var fitMode  = transitionFitMode;
+            var oldPath    = oldImagePath!;
+            var newPath    = wallpaperPath;
+            var bounds     = transitionBounds;
+            var duration   = transitionDuration;
+            var fitMode    = transitionFitMode;
             System.Windows.Application.Current.Dispatcher.Invoke(
-                () => beginFade = ShowTransitionOverlay!(oldPath, bounds, duration, fitMode));
+                () => beginFade = ShowTransitionOverlay!(oldPath, newPath, bounds, duration, fitMode));
         }
 
+        // Step 3 — set the new wallpaper (overlay is covering the desktop during this).
         try
         {
-            _wallpaperService.SetWallpaper(state.Monitor.WallpaperDevicePath!, next!.FilePath, state.Config.FitMode);
+            _wallpaperService.SetWallpaper(state.Monitor.WallpaperDevicePath!, wallpaperPath, state.Config.FitMode);
         }
         catch (Exception ex) { AppLogger.Error($"SetWallpaper failed for monitor {state.Monitor.DeviceId}", ex); return; }
 
-        // Now that the new wallpaper is in place, start the fade to reveal it.
+        // Step 4 — start the crossfade animation to reveal the new image.
         if (beginFade is not null)
             System.Windows.Application.Current.Dispatcher.Invoke(beginFade);
 
@@ -304,6 +367,16 @@ public class SlideshowEngine : IDisposable
     }
 
     /// <summary>
+    /// Returns a stable per-monitor temp path for the composed collage JPEG.
+    /// Uses a hash of the device ID to produce a short, safe filename.
+    /// </summary>
+    private static string GetCollageTempPath(string monitorDeviceId)
+    {
+        uint hash = (uint)monitorDeviceId.GetHashCode();
+        return System.IO.Path.Combine(AppSettings.AppDataFolder, $"wallpaper_collage_{hash:X8}.jpg");
+    }
+
+    /// <summary>
     /// Returns the file paths of the most recently shown images from the current deck
     /// so they can be deferred to the back of the next shuffle pass.
     /// Captures at most half the deck size, capped at 20, to keep the "fresh" zone large.
@@ -331,6 +404,8 @@ public class SlideshowEngine : IDisposable
         public List<ImageEntry> ShuffleDeck { get; set; } = new();
         public int DeckIndex { get; set; } = 0;
         public int PoolVersion { get; set; } = -1;
+        /// <summary>True if the previous wallpaper advance produced a collage. Prevents back-to-back collages.</summary>
+        public bool LastWasCollage { get; set; } = false;
         public SlideshowState SlideshowState { get; }
         public object AdvanceLock { get; } = new();
 

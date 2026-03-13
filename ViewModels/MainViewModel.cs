@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BackgroundSlideShow.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly AppDbContext _db;
     private readonly MonitorService _monitorService;
@@ -132,9 +132,19 @@ public partial class MainViewModel : ObservableObject
         _engine.StopAll();
     }
 
-    private void OnEngineStateChanged(object? sender, SlideshowStateChangedEventArgs e)
+    // Bug 1 fix: marshal to the UI thread before reading Monitors.
+    // AdvanceMonitor fires StateChanged from a System.Timers.Timer thread-pool thread;
+    // ObservableCollection is not thread-safe for concurrent read + Clear().
+    private void OnEngineStateChanged(object? sender, SlideshowStateChangedEventArgs e) =>
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            var vm = Monitors.FirstOrDefault(m => m.MonitorId == e.State.MonitorId);
+            vm?.UpdateState(e.State);
+        });
+
+    // Bug 4 fix: unsubscribe from engine event so the engine doesn't hold this VM alive.
+    public void Dispose()
     {
-        var vm = Monitors.FirstOrDefault(m => m.MonitorId == e.State.MonitorId);
-        vm?.UpdateState(e.State);
+        _engine.StateChanged -= OnEngineStateChanged;
     }
 }

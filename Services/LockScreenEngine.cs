@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using BackgroundSlideShow.Models;
 
 namespace BackgroundSlideShow.Services;
 
@@ -21,6 +22,9 @@ public sealed class LockScreenEngine : IDisposable
 
     private static readonly string CollageTempPath = Path.Combine(
         AppSettings.AppDataFolder, "lockscreen_collage.jpg");
+
+    private static readonly string SingleTempPath = Path.Combine(
+        AppSettings.AppDataFolder, "lockscreen_single.jpg");
 
     private readonly LockScreenService _lockScreenService;
     private readonly AppSettings       _appSettings;
@@ -119,7 +123,7 @@ public sealed class LockScreenEngine : IDisposable
             if (_deck.Count == 0) return;
             singlePath = _deck[_deckPos];
 
-            if (_appSettings.LockScreenCollageEnabled && _deck.Count >= 2)
+            if (_appSettings.LockScreenCollageEnabled && _deck.Count >= 3)
             {
                 if (--_collageCountdown <= 0)
                 {
@@ -140,7 +144,34 @@ public sealed class LockScreenEngine : IDisposable
             // Fall through to single image if collage composition failed.
         }
 
-        await _lockScreenService.SetLockScreenImageAsync(singlePath);
+        await ApplySingleAsync(singlePath);
+    }
+
+    /// <summary>
+    /// Pre-composites a single image onto a screen-sized canvas using the
+    /// user's chosen FitMode, then sets it as the lock screen.
+    /// Falls back to the raw file if composition fails.
+    /// </summary>
+    private async Task ApplySingleAsync(string sourcePath)
+    {
+        var fitMode = _appSettings.LockScreenFitMode;
+        var processedPath = await Task.Run<string>(() =>
+        {
+            try
+            {
+                var (w, h) = GetScreenSize();
+                if (w <= 0 || h <= 0) { w = 1920; h = 1080; }
+                Directory.CreateDirectory(Path.GetDirectoryName(SingleTempPath)!);
+                CollageComposer.ComposeSingle(sourcePath, fitMode, w, h, SingleTempPath);
+                return SingleTempPath;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"ComposeSingle failed for '{sourcePath}' — {ex.Message}");
+                return sourcePath;
+            }
+        });
+        await _lockScreenService.SetLockScreenImageAsync(processedPath);
     }
 
     /// <summary>
@@ -154,7 +185,7 @@ public sealed class LockScreenEngine : IDisposable
 
         lock (_lock)
         {
-            if (_deck.Count < 2) return Task.FromResult<string?>(null);
+            if (_deck.Count < 3) return Task.FromResult<string?>(null);
 
             layout = CollageComposer.PickLayout(_deck.Count, _rng);
             int needed = CollageComposer.ImagesNeeded(layout);

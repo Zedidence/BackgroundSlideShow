@@ -2,11 +2,12 @@ using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using BackgroundSlideShow.Models;
 using BackgroundSlideShow.Services;
 
 namespace BackgroundSlideShow.ViewModels;
 
-public partial class LockScreenViewModel : ObservableObject
+public partial class LockScreenViewModel : ObservableObject, IDisposable
 {
     private readonly LockScreenEngine _engine;
     private readonly AppSettings      _appSettings;
@@ -53,6 +54,18 @@ public partial class LockScreenViewModel : ObservableObject
         {
             if (_appSettings.LockScreenIntervalMinutes == value) return;
             _appSettings.LockScreenIntervalMinutes = value;
+            _appSettings.Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public FitMode FitMode
+    {
+        get => _appSettings.LockScreenFitMode;
+        set
+        {
+            if (_appSettings.LockScreenFitMode == value) return;
+            _appSettings.LockScreenFitMode = value;
             _appSettings.Save();
             OnPropertyChanged();
         }
@@ -105,4 +118,7 @@ public partial class LockScreenViewModel : ObservableObject
         if (dialog.ShowDialog() == true)
             FolderPath = dialog.FolderName;
     }
+
+    // Bug 3 fix: unsubscribe from engine event so the engine doesn't hold this VM alive.
+    public void Dispose() => _engine.StateChanged -= OnEngineStateChanged;
 }

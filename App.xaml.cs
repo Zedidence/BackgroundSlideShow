@@ -80,42 +80,36 @@ public partial class App : Application
                                           _libraryService, _imageSelector, _appSettings);
 
             // Wire the transition overlay delegate — keeps the engine decoupled from WPF windows.
-            // Track one active overlay per monitor so stale windows are closed before a new
-            // transition starts, preventing overlapping semi-transparent windows from piling up.
+            // One active overlay per monitor; stale windows are closed before a new transition
+            // starts so they never stack up.
             //
-            // This delegate is called via Dispatcher.Invoke (on the UI thread).  It MUST block
-            // until the overlay's first frame is composited, then return the BeginFade action.
-            // Blocking here is achieved by Dispatcher.PushFrame — a nested message loop that
-            // pumps WPF messages (including ContentRendered) while the caller waits.
+            // This delegate is called via Dispatcher.Invoke (on the UI thread).  It blocks until
+            // the overlay's first frame is composited (via Dispatcher.PushFrame), then returns the
+            // BeginFade action which the engine calls after SetWallpaper.
             var activeTransitions = new Dictionary<string, Views.TransitionWindow>();
-            _engine.ShowTransitionOverlay = (oldPath, bounds, durationMs, fitMode) =>
+            _engine.ShowTransitionOverlay = (oldPath, newPath, bounds, durationMs, fitMode) =>
             {
-                var key = $"{(int)bounds.Left},{(int)bounds.Top}";
+                // Bug 8 fix: truncating doubles to int could collide for monitors whose
+                // Left/Top coordinates are within 1 pixel of each other.  Use the full
+                // rect (all four components as doubles) for a collision-proof key.
+                var key = $"{bounds.Left},{bounds.Top},{bounds.Width},{bounds.Height}";
                 if (activeTransitions.TryGetValue(key, out var stale))
                 {
                     stale.Close();
                     activeTransitions.Remove(key);
                 }
 
-                var win = new Views.TransitionWindow(oldPath, bounds, durationMs, fitMode);
+                var win = new Views.TransitionWindow(oldPath, newPath, bounds, durationMs, fitMode);
                 activeTransitions[key] = win;
                 win.Closed += (_, _) => activeTransitions.Remove(key);
 
-                // Start transparent so that if ShowWindow briefly places the window at
-                // HWND_TOP before SendToBottom() takes effect, DWM composes nothing
-                // visible — eliminating the one-frame flash in front of other windows.
-                win.Opacity = 0.0;
+                // EnsureHandle() creates the HWND and fires OnSourceInitialized (which sets
+                // WS_EX_TOOLWINDOW and z-order) while the window is still invisible.
+                // This guarantees the taskbar never sees the window without WS_EX_TOOLWINDOW.
+                new System.Windows.Interop.WindowInteropHelper(win).EnsureHandle();
+
                 win.Show();
-                win.SendToBottom();
 
-                // WPF may re-elevate the window's Z-order after Show() returns as part
-                // of its own deferred layout/render pass.  Schedule a second SendToBottom
-                // at Render priority so it fires after that pass but before ContentRendered.
-                Dispatcher.InvokeAsync(win.SendToBottom, System.Windows.Threading.DispatcherPriority.Render);
-
-                // Block via a nested message loop until ContentRendered fires (first DWM frame).
-                // We also flip the window to full opacity here, now that it is safely at
-                // HWND_BOTTOM, so it covers the desktop before SetWallpaper is called.
                 if (win.IsImageLoaded)
                 {
                     var frame = new System.Windows.Threading.DispatcherFrame();
@@ -123,7 +117,6 @@ public partial class App : Application
                     void OnRendered(object? s, EventArgs _)
                     {
                         win.ContentRendered -= OnRendered;
-                        win.Opacity = 1.0; // now at HWND_BOTTOM — safe to make visible
                         frame.Continue = false;
                     }
                     void OnClosed(object? s, EventArgs _)
@@ -135,22 +128,22 @@ public partial class App : Application
                     win.ContentRendered += OnRendered;
                     win.Closed          += OnClosed;
 
-                    // Safety: cap the wait at 500 ms so a missed ContentRendered
-                    // never stalls the slideshow indefinitely.
                     var timeout = new System.Windows.Threading.DispatcherTimer(
                         System.Windows.Threading.DispatcherPriority.Background)
                     {
                         Interval = TimeSpan.FromMilliseconds(500)
                     };
-                    timeout.Tick += (_, _) => { timeout.Stop(); win.Opacity = 1.0; frame.Continue = false; };
+                    timeout.Tick += (_, _) => { timeout.Stop(); frame.Continue = false; };
                     timeout.Start();
 
                     System.Windows.Threading.Dispatcher.PushFrame(frame);
+
+                    // Always clean up regardless of which path exited PushFrame.
                     timeout.Stop();
+                    win.ContentRendered -= OnRendered;
+                    win.Closed          -= OnClosed;
                 }
 
-                // Return the action that begins the fade.  The engine calls this AFTER
-                // SetWallpaper so the opacity animation reveals the correct new image.
                 return () => win.BeginFade();
             };
 
@@ -199,6 +192,10 @@ public partial class App : Application
         if (Resources["TrayIcon"] is TaskbarIcon tray)
             tray.Dispose();
 
+        // Bugs 3 & 4 fix: dispose VMs before their engines so event handlers are
+        // unsubscribed before the engines raise any final StateChanged events on teardown.
+        _mainVm?.Dispose();
+        _lockScreenVm?.Dispose();
         _gifPlayerVm?.Dispose();
         _lockScreenEngine?.Dispose();
         _engine?.Dispose();
