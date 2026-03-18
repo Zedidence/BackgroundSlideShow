@@ -20,6 +20,7 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.2.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="WPF-UI" Version="4.2.0" />
   </ItemGroup>
 
 

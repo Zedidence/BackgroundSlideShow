@@ -5,6 +5,7 @@ using BackgroundSlideShow.Services;
 using BackgroundSlideShow.ViewModels;
 using BackgroundSlideShow.Views;
 using H.NotifyIcon;
+using Wpf.Ui.Appearance;
 
 namespace BackgroundSlideShow;
 
@@ -49,6 +50,9 @@ public partial class App : Application
         try
         {
             base.OnStartup(e);
+
+            // Apply WPF UI dark theme globally
+            ApplicationThemeManager.Apply(ApplicationTheme.Dark);
 
             AppLogger.Info("Loading AppSettings");
             _appSettings = new AppSettings();

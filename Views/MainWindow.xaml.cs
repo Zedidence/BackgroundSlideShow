@@ -4,10 +4,11 @@ using BackgroundSlideShow.Services;
 using BackgroundSlideShow.ViewModels;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
+using Wpf.Ui.Controls;
 
 namespace BackgroundSlideShow.Views;
 
-public partial class MainWindow : Window
+public partial class MainWindow : FluentWindow
 {
     private readonly MainViewModel _vm;
     private readonly AppSettings _appSettings;
@@ -26,33 +27,34 @@ public partial class MainWindow : Window
         await _vm.InitializeAsync();
     }
 
-    private bool _libraryVisible = true;
+    // ── NavigationView ──────────────────────────────────────────────────────
 
-    private void ToggleLibrary_Click(object sender, RoutedEventArgs e)
+    private void RootNavigation_SelectionChanged(NavigationView sender, RoutedEventArgs args)
     {
-        _libraryVisible = !_libraryVisible;
-        LibraryPanel.Visibility    = _libraryVisible ? Visibility.Visible : Visibility.Collapsed;
-        LibrarySplitter.Visibility = _libraryVisible ? Visibility.Visible : Visibility.Collapsed;
-        LibraryColumn.Width        = _libraryVisible ? new GridLength(220) : new GridLength(0);
-        SplitterColumn.Width       = _libraryVisible ? new GridLength(4)   : new GridLength(0);
-        ToggleLibraryBtn.Content   = _libraryVisible ? "\u25C0 Library" : "\u25B6 Library";
+        if (sender.SelectedItem is not NavigationViewItem item) return;
+        var tag = item.Tag as string;
+
+        switch (tag)
+        {
+            case "overview":
+                ShowOverview();
+                break;
+            case "gallery":
+                ShowGallery();
+                break;
+            case "gif":
+                ShowGifMode();
+                break;
+            case "lockscreen":
+                ShowLockScreen();
+                break;
+            case "settings":
+                ShowSettings();
+                break;
+        }
     }
 
-    private void SetActiveNav(System.Windows.Controls.Button active)
-    {
-        OverviewBtn.Tag    = null;
-        GalleryBtn.Tag     = null;
-        GifBtn.Tag         = null;
-        LockScreenBtn.Tag  = null;
-        active.Tag = "Active";
-    }
-
-    private void ClearMonitorSelection()
-    {
-        foreach (var m in _vm.Monitors) m.IsSelected = false;
-    }
-
-    private void Overview_Click(object sender, RoutedEventArgs e)
+    private void ShowOverview()
     {
         GalleryPanel.Visibility       = Visibility.Collapsed;
         GifPanel.Visibility           = Visibility.Collapsed;
@@ -60,21 +62,22 @@ public partial class MainWindow : Window
         MonitorContentArea.Visibility = Visibility.Visible;
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
-        SetActiveNav(OverviewBtn);
+        ShowLibrarySidebar(true);
     }
 
-    private void Gallery_Click(object sender, RoutedEventArgs e)
+    private void ShowGallery()
     {
+
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
         MonitorContentArea.Visibility = Visibility.Collapsed;
         GifPanel.Visibility           = Visibility.Collapsed;
         LockScreenPanel.Visibility    = Visibility.Collapsed;
         GalleryPanel.Visibility       = Visibility.Visible;
-        SetActiveNav(GalleryBtn);
+        ShowLibrarySidebar(true);
     }
 
-    private void GifMode_Click(object sender, RoutedEventArgs e)
+    private void ShowGifMode()
     {
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
@@ -82,10 +85,10 @@ public partial class MainWindow : Window
         GalleryPanel.Visibility       = Visibility.Collapsed;
         LockScreenPanel.Visibility    = Visibility.Collapsed;
         GifPanel.Visibility           = Visibility.Visible;
-        SetActiveNav(GifBtn);
+        ShowLibrarySidebar(false);
     }
 
-    private void LockScreen_Click(object sender, RoutedEventArgs e)
+    private void ShowLockScreen()
     {
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
@@ -93,17 +96,34 @@ public partial class MainWindow : Window
         GalleryPanel.Visibility       = Visibility.Collapsed;
         GifPanel.Visibility           = Visibility.Collapsed;
         LockScreenPanel.Visibility    = Visibility.Visible;
-        SetActiveNav(LockScreenBtn);
+        ShowLibrarySidebar(false);
     }
 
-    private void ShowSettings_Click(object sender, RoutedEventArgs e)
+    private void ShowSettings()
     {
         new SettingsWindow(_appSettings) { Owner = this }.ShowDialog();
     }
 
+    // ── Library sidebar ─────────────────────────────────────────────────────
+
+    private void ShowLibrarySidebar(bool show)
+    {
+        LibraryPanel.Visibility    = show ? Visibility.Visible : Visibility.Collapsed;
+        LibrarySplitter.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        LibraryColumn.Width        = show ? new GridLength(220) : new GridLength(0);
+        SplitterColumn.Width       = show ? new GridLength(4)   : new GridLength(0);
+    }
+
+    // ── Monitor selection ───────────────────────────────────────────────────
+
+    private void ClearMonitorSelection()
+    {
+        foreach (var m in _vm.Monitors) m.IsSelected = false;
+    }
+
     private void MonitorCard_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement fe && fe.DataContext is ViewModels.MonitorViewModel mvm)
+        if (sender is FrameworkElement fe && fe.DataContext is MonitorViewModel mvm)
         {
             GalleryPanel.Visibility       = Visibility.Collapsed;
             GifPanel.Visibility           = Visibility.Collapsed;
@@ -112,12 +132,10 @@ public partial class MainWindow : Window
             ClearMonitorSelection();
             mvm.IsSelected = true;
             _vm.SelectedMonitor = mvm;
-            // Clear nav active state — the detail panel is neither Overview nor Gallery
-            OverviewBtn.Tag = null;
-            GalleryBtn.Tag  = null;
-            GifBtn.Tag      = null;
         }
     }
+
+    // ── Tray ────────────────────────────────────────────────────────────────
 
     private void HideToTray()
     {
@@ -148,7 +166,6 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
-        // The X button always exits the application completely.
         Application.Current.Shutdown();
     }
 }
