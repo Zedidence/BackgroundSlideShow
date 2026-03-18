@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace BackgroundSlideShow;
 
@@ -37,6 +38,12 @@ public class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     private Size _viewport;
     private Point _offset;
     private ScrollViewer? _scrollOwner;
+
+    // ── Smooth scroll ──────────────────────────────────────────────────────────
+    private double _targetVerticalOffset;
+    private DispatcherTimer? _smoothScrollTimer;
+    private const double ScrollEaseFactor = 0.25;   // 0→1; higher = snappier
+    private const double ScrollEpsilon    = 0.5;     // px threshold to snap
 
     private int GetItemCount()
     {
@@ -174,8 +181,8 @@ public class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     public void LineUp() => SetVerticalOffset(_offset.Y - ItemHeight);
     public void PageDown() => SetVerticalOffset(_offset.Y + _viewport.Height);
     public void PageUp() => SetVerticalOffset(_offset.Y - _viewport.Height);
-    public void MouseWheelDown() => SetVerticalOffset(_offset.Y + ItemHeight * 3);
-    public void MouseWheelUp() => SetVerticalOffset(_offset.Y - ItemHeight * 3);
+    public void MouseWheelDown() => AnimateToOffset(_targetVerticalOffset + 60);
+    public void MouseWheelUp() => AnimateToOffset(_targetVerticalOffset - 60);
 
     public void LineLeft() { }
     public void LineRight() { }
@@ -191,6 +198,42 @@ public class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
         offset = Math.Max(0, Math.Min(offset, _extent.Height - _viewport.Height));
         if (offset == _offset.Y) return;
         _offset.Y = offset;
+        _targetVerticalOffset = offset;
+        _scrollOwner?.InvalidateScrollInfo();
+        InvalidateMeasure();
+    }
+
+    /// <summary>Smoothly lerps the scroll offset toward the target (~60 fps ease-out).</summary>
+    private void AnimateToOffset(double target)
+    {
+        var max = Math.Max(0, _extent.Height - _viewport.Height);
+        _targetVerticalOffset = Math.Max(0, Math.Min(target, max));
+
+        if (_smoothScrollTimer == null)
+        {
+            _smoothScrollTimer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(16), // ~60 fps
+            };
+            _smoothScrollTimer.Tick += SmoothScrollTick;
+        }
+
+        if (!_smoothScrollTimer.IsEnabled)
+            _smoothScrollTimer.Start();
+    }
+
+    private void SmoothScrollTick(object? sender, EventArgs e)
+    {
+        var diff = _targetVerticalOffset - _offset.Y;
+        if (Math.Abs(diff) < ScrollEpsilon)
+        {
+            _offset.Y = _targetVerticalOffset;
+            _smoothScrollTimer?.Stop();
+        }
+        else
+        {
+            _offset.Y += diff * ScrollEaseFactor;
+        }
         _scrollOwner?.InvalidateScrollInfo();
         InvalidateMeasure();
     }

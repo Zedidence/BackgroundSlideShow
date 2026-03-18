@@ -17,6 +17,9 @@ public class SlideshowEngine : IDisposable
     private readonly ConcurrentDictionary<string, PerMonitorState> _states = new();
     private readonly Random _rng = new();
 
+    /// <summary>Lock protecting reads/writes of the global in-use set across all monitors.</summary>
+    private readonly object _globalInUseLock = new();
+
     public event EventHandler<SlideshowStateChangedEventArgs>? StateChanged;
 
     /// <summary>
@@ -175,27 +178,37 @@ public class SlideshowEngine : IDisposable
             // Rebuild the shuffle deck when the image pool has changed or the deck is exhausted.
             if (state.PoolVersion != _poolVersion || state.DeckIndex >= state.ShuffleDeck.Count)
             {
-                // Capture recently-shown images before discarding the old deck so they
-                // can be deferred to the back of the new deck, guaranteeing a fresh run
-                // before any near-repeats can occur at the deck boundary.
-                var recentPaths = CaptureRecentPaths(state);
-
                 state.ShuffleDeck = _imageSelector.BuildShuffledDeck(
                     images, state.Monitor, state.Config, state.AllowedFolderIds);
                 state.DeckIndex = 0;
                 state.PoolVersion = _poolVersion;
 
-                // Push recently-seen images to the back half of the new deck.
-                // The front portion is guaranteed to be images not recently shown.
-                if (recentPaths.Count > 0 && state.ShuffleDeck.Count > recentPaths.Count)
+                // Partition: images NOT in the persistent history go to the front,
+                // images already seen recently go to the back.  This guarantees
+                // every unseen image plays before any repeat, even across deck rebuilds
+                // and pool-version changes.
+                if (state.HistorySet.Count > 0 && state.ShuffleDeck.Count > state.HistorySet.Count)
                 {
-                    var front = state.ShuffleDeck.Where(e => !recentPaths.Contains(e.FilePath)).ToList();
-                    var back  = state.ShuffleDeck.Where(e =>  recentPaths.Contains(e.FilePath)).ToList();
+                    var front = state.ShuffleDeck.Where(e => !state.HistorySet.Contains(e.FilePath)).ToList();
+                    var back  = state.ShuffleDeck.Where(e =>  state.HistorySet.Contains(e.FilePath)).ToList();
                     state.ShuffleDeck = [..front, ..back];
                 }
             }
 
             if (state.ShuffleDeck.Count == 0) return;
+
+            // Collect images currently showing on OTHER monitors for cross-monitor dedup.
+            HashSet<string> globalInUse;
+            lock (_globalInUseLock)
+            {
+                globalInUse = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kvp in _states)
+                {
+                    if (kvp.Key == state.Monitor.DeviceId) continue;
+                    foreach (var path in kvp.Value.SlideshowState.CurrentImagePaths)
+                        globalInUse.Add(path);
+                }
+            }
 
             // ShuffleDeck was built by BuildShuffledDeck → FilterWithFallback, so all images
             // in the deck (and therefore all collage panels) already respect the monitor's
@@ -204,26 +217,77 @@ public class SlideshowEngine : IDisposable
             // Never produce two collages back-to-back: if the previous slide was a collage,
             // force a single image this time regardless of the chance roll.
             bool doCollage = state.Config.CollageEnabled
-                && state.ShuffleDeck.Count >= 3
+                && state.ShuffleDeck.Count >= 2
                 && !state.LastWasCollage
                 && _rng.Next(100) < state.Config.CollageChance;
+
+            // History size: 75% of the pool, capped at 500, so the vast majority
+            // of the library must play before any image can repeat.
+            int maxHistory = Math.Min(state.ShuffleDeck.Count * 3 / 4, 500);
 
             state.LastWasCollage = doCollage;
 
             if (doCollage)
             {
-                collageLayout = CollageComposer.PickLayout(state.ShuffleDeck.Count, _rng);
-                int needed = CollageComposer.ImagesNeeded(collageLayout);
-                collageImages = Enumerable.Range(0, needed)
-                    .Select(i => state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count].FilePath)
-                    .ToList();
-                next = state.ShuffleDeck[state.DeckIndex];
-                // Advance by needed; cap at deck size so CaptureRecentPaths stays in bounds.
-                state.DeckIndex = Math.Min(state.DeckIndex + needed, state.ShuffleDeck.Count);
+                int count = CollageComposer.PickImageCount(state.ShuffleDeck.Count, _rng);
+
+                // Pick images from deck, preferring those not in use on other monitors.
+                var collageEntries = new List<ImageEntry>(count);
+                for (int i = 0; collageEntries.Count < count && i < state.ShuffleDeck.Count; i++)
+                {
+                    var candidate = state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count];
+                    if (!globalInUse.Contains(candidate.FilePath))
+                        collageEntries.Add(candidate);
+                }
+                // Fallback: fill from deck regardless of global in-use.
+                for (int i = 0; collageEntries.Count < count && i < state.ShuffleDeck.Count; i++)
+                {
+                    var candidate = state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count];
+                    if (!collageEntries.Contains(candidate))
+                        collageEntries.Add(candidate);
+                }
+
+                // Score all layouts for this image count against actual image orientations,
+                // then reorder images so each lands in its best-matching cell.
+                int canvasW = (int)state.Monitor.Bounds.Width;
+                int canvasH = (int)state.Monitor.Bounds.Height;
+                if (canvasW <= 0 || canvasH <= 0) { canvasW = 1920; canvasH = 1080; }
+
+                var (bestLayout, orderedPaths) = CollageComposer.PickBestLayout(
+                    collageEntries, canvasW, canvasH, _rng);
+                collageLayout = bestLayout;
+                collageImages = orderedPaths;
+
+                next = collageEntries[0];
+                // Record all collage images in history
+                foreach (var path in collageImages)
+                    state.RecordShown(path, maxHistory);
+                // Advance by the number of images consumed; cap at deck size.
+                state.DeckIndex = Math.Min(state.DeckIndex + collageEntries.Count, state.ShuffleDeck.Count);
             }
             else
             {
-                next = state.ShuffleDeck[state.DeckIndex++];
+                // Single image — skip images currently showing on other monitors if possible.
+                next = null;
+                int scanned = 0;
+                while (scanned < state.ShuffleDeck.Count)
+                {
+                    var candidate = state.ShuffleDeck[state.DeckIndex % state.ShuffleDeck.Count];
+                    state.DeckIndex++;
+                    scanned++;
+                    if (!globalInUse.Contains(candidate.FilePath))
+                    {
+                        next = candidate;
+                        break;
+                    }
+                }
+                // Fallback: if every image in deck is in use on other monitors, just use the next one.
+                if (next is null)
+                {
+                    next = state.ShuffleDeck[state.DeckIndex % state.ShuffleDeck.Count];
+                    state.DeckIndex++;
+                }
+                state.RecordShown(next.FilePath, maxHistory);
             }
 
             if (string.IsNullOrEmpty(state.Monitor.WallpaperDevicePath))
@@ -311,6 +375,14 @@ public class SlideshowEngine : IDisposable
         state.SlideshowState.Status = SlideshowStatus.Playing;
         state.SlideshowState.NextChangeAt = DateTime.UtcNow.AddSeconds(state.Config.IntervalSeconds);
 
+        // Track all image paths currently showing on this monitor (for cross-monitor dedup).
+        lock (_globalInUseLock)
+        {
+            state.SlideshowState.CurrentImagePaths = collageImages is not null
+                ? new List<string>(collageImages)
+                : new List<string> { next.FilePath };
+        }
+
         if (!suppressStateChanged)
             RaiseStateChanged(state.SlideshowState);
     }
@@ -376,24 +448,6 @@ public class SlideshowEngine : IDisposable
         return System.IO.Path.Combine(AppSettings.AppDataFolder, $"wallpaper_collage_{hash:X8}.jpg");
     }
 
-    /// <summary>
-    /// Returns the file paths of the most recently shown images from the current deck
-    /// so they can be deferred to the back of the next shuffle pass.
-    /// Captures at most half the deck size, capped at 20, to keep the "fresh" zone large.
-    /// </summary>
-    private static HashSet<string> CaptureRecentPaths(PerMonitorState state)
-    {
-        const int MaxTail = 20;
-        int shown = state.DeckIndex; // number of images shown from the current deck
-        if (shown == 0 || state.ShuffleDeck.Count == 0) return [];
-
-        int tailCount = Math.Min(shown, Math.Min(state.ShuffleDeck.Count / 2, MaxTail));
-        int from = shown - tailCount;
-        return new HashSet<string>(
-            state.ShuffleDeck.GetRange(from, tailCount).Select(e => e.FilePath),
-            StringComparer.OrdinalIgnoreCase);
-    }
-
     // ── Nested types ──────────────────────────────────────────────────────────
 
     private class PerMonitorState
@@ -414,6 +468,26 @@ public class SlideshowEngine : IDisposable
         /// Updated live via <see cref="SlideshowEngine.SetFolderAssignments"/>.
         /// </summary>
         public IReadOnlySet<int>? AllowedFolderIds { get; set; }
+
+        /// <summary>
+        /// Persistent ring buffer of recently-shown image paths, surviving across deck rebuilds.
+        /// Sized to 75% of the pool (capped at 500) so near-repeats are impossible until the
+        /// history naturally ages out.
+        /// </summary>
+        public Queue<string> History { get; } = new();
+        public HashSet<string> HistorySet { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public void RecordShown(string filePath, int maxHistory)
+        {
+            if (HistorySet.Contains(filePath)) return;
+            History.Enqueue(filePath);
+            HistorySet.Add(filePath);
+            while (History.Count > maxHistory)
+            {
+                var old = History.Dequeue();
+                HistorySet.Remove(old);
+            }
+        }
 
         public PerMonitorState(MonitorInfo monitor, MonitorConfig config)
         {

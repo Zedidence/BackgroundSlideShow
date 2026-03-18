@@ -123,7 +123,7 @@ public sealed class LockScreenEngine : IDisposable
             if (_deck.Count == 0) return;
             singlePath = _deck[_deckPos];
 
-            if (_appSettings.LockScreenCollageEnabled && _deck.Count >= 3)
+            if (_appSettings.LockScreenCollageEnabled && _deck.Count >= 2)
             {
                 if (--_collageCountdown <= 0)
                 {
@@ -180,20 +180,21 @@ public sealed class LockScreenEngine : IDisposable
     /// </summary>
     private Task<string?> BuildCollageAsync()
     {
-        List<string>  images;
-        CollageLayout layout;
+        List<string> images;
 
         lock (_lock)
         {
-            if (_deck.Count < 3) return Task.FromResult<string?>(null);
+            if (_deck.Count < 2) return Task.FromResult<string?>(null);
 
-            layout = CollageComposer.PickLayout(_deck.Count, _rng);
-            int needed = CollageComposer.ImagesNeeded(layout);
-
-            images = Enumerable.Range(0, needed)
+            int count = CollageComposer.PickImageCount(_deck.Count, _rng);
+            images = Enumerable.Range(0, count)
                 .Select(i => _deck[(_deckPos + i) % _deck.Count])
                 .ToList();
         }
+
+        // Capture rng ref for use inside Task.Run (lock-screen engine is single-threaded
+        // for advances, so no contention risk).
+        var rng = _rng;
 
         return Task.Run<string?>(() =>
         {
@@ -202,9 +203,11 @@ public sealed class LockScreenEngine : IDisposable
                 var (w, h) = GetScreenSize();
                 if (w <= 0 || h <= 0) { w = 1920; h = 1080; }
 
+                var (bestLayout, orderedPaths) = CollageComposer.PickBestLayoutFromPaths(images, w, h, rng);
+
                 Directory.CreateDirectory(Path.GetDirectoryName(CollageTempPath)!);
-                CollageComposer.Compose(layout, images, w, h, CollageTempPath);
-                AppLogger.Info($"Collage composed — layout={layout}, {images.Count} images → {w}×{h}");
+                CollageComposer.Compose(bestLayout, orderedPaths, w, h, CollageTempPath);
+                AppLogger.Info($"Collage composed — layout={bestLayout}, {orderedPaths.Count} images → {w}×{h}");
                 return CollageTempPath;
             }
             catch (Exception ex)

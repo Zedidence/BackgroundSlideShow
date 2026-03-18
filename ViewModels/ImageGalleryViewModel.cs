@@ -14,6 +14,7 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 {
     private readonly ILibraryService _libraryService;
     private readonly EventHandler _libraryChangedHandler;
+    private int _cachedSelectedIndex = -1;
 
     // ── Gallery monitor filter ────────────────────────────────────────────────
 
@@ -76,6 +77,10 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
     partial void OnSortOrderChanged(string value) => _ = RefreshImagesAsync();
 
+    // ── Loading state ────────────────────────────────────────────────────────
+
+    [ObservableProperty] private bool _isLoading;
+
     // ── Thumbnail size (48–200 px) ────────────────────────────────────────────
 
     [ObservableProperty] private int _thumbnailSize = 64;
@@ -136,6 +141,12 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(CanNavigateNext))]
     private ImageEntry? _selectedImage;
 
+    partial void OnSelectedImageChanged(ImageEntry? value)
+    {
+        _cachedSelectedIndex = value is not null && Images.Count > 0
+            ? Images.IndexOf(value) : -1;
+    }
+
     public bool   IsPreviewVisible  => SelectedImage is not null;
     public string PreviewFileName   => SelectedImage is not null ? Path.GetFileName(SelectedImage.FilePath) : string.Empty;
     public string PreviewDimensions => SelectedImage is not null ? $"{SelectedImage.Width} × {SelectedImage.Height} px" : string.Empty;
@@ -184,7 +195,9 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
     private void NavigatePrevious()
     {
         if (SelectedImage is null || Images.Count == 0) return;
-        var idx = Images.IndexOf(SelectedImage);
+        var idx = _cachedSelectedIndex;
+        if (idx < 0 || idx >= Images.Count || !ReferenceEquals(Images[idx], SelectedImage))
+            idx = Images.IndexOf(SelectedImage);
         SelectedImage = idx > 0 ? Images[idx - 1] : Images[^1];
     }
 
@@ -192,7 +205,9 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
     private void NavigateNext()
     {
         if (SelectedImage is null || Images.Count == 0) return;
-        var idx = Images.IndexOf(SelectedImage);
+        var idx = _cachedSelectedIndex;
+        if (idx < 0 || idx >= Images.Count || !ReferenceEquals(Images[idx], SelectedImage))
+            idx = Images.IndexOf(SelectedImage);
         SelectedImage = idx < Images.Count - 1 ? Images[idx + 1] : Images[0];
     }
 
@@ -215,6 +230,11 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
     // ── Refresh ───────────────────────────────────────────────────────────────
 
+    /// <summary>Raised just before the Images list is replaced, so the view can save scroll position.</summary>
+    public event Action? BeforeImagesRefresh;
+    /// <summary>Raised just after the Images list is replaced, so the view can restore scroll position.</summary>
+    public event Action? AfterImagesRefresh;
+
     public async Task RefreshImagesAsync()
     {
         // Cancel any already-in-flight refresh so rapid LibraryChanged events don't pile up.
@@ -225,6 +245,8 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
         try
         {
+            IsLoading = true;
+
             // Run both queries concurrently; counts use cheap COUNT(*) without loading objects.
             var filteredTask = _libraryService.GetFilteredImagesAsync(
                 OrientationFilter, SearchQuery, SortOrder, cts.Token);
@@ -249,13 +271,19 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
+                BeforeImagesRefresh?.Invoke();
                 TotalCount    = total;
                 ExcludedCount = excluded;
                 Images        = list;
                 OnPropertyChanged(nameof(ShowExcludedBadge));
+                AfterImagesRefresh?.Invoke();
             });
         }
         catch (OperationCanceledException) { /* superseded by a newer refresh */ }
+        finally
+        {
+            IsLoading = false;
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
