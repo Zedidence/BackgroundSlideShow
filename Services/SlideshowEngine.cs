@@ -440,13 +440,13 @@ public class SlideshowEngine : IDisposable
 
     /// <summary>
     /// Returns a stable per-monitor temp path for the composed collage JPEG.
-    /// Uses a hash of the device ID to produce a short, safe filename.
+    /// Uses MD5 of the device ID — randomized <see cref="string.GetHashCode"/> would produce
+    /// a different filename per process, leaking orphan files into AppData on every restart.
     /// </summary>
-    private static string GetCollageTempPath(string monitorDeviceId)
-    {
-        uint hash = (uint)monitorDeviceId.GetHashCode();
-        return System.IO.Path.Combine(AppSettings.AppDataFolder, $"wallpaper_collage_{hash:X8}.jpg");
-    }
+    private static string GetCollageTempPath(string monitorDeviceId) =>
+        System.IO.Path.Combine(
+            AppSettings.AppDataFolder,
+            $"wallpaper_collage_{StableHash.Short(monitorDeviceId)}.jpg");
 
     // ── Nested types ──────────────────────────────────────────────────────────
 

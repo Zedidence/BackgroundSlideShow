@@ -97,12 +97,11 @@ public class WallpaperService
     // Returns a stable per-monitor path for the scaled temp JPEG.
     // Using a fixed path (not a GUID) means we overwrite rather than delete-and-recreate,
     // which avoids a race where DWM reads the file asynchronously after SetWallpaper returns.
+    // Uses MD5 (not string.GetHashCode) so the filename is identical across process restarts —
+    // otherwise stale wallpaper_*.jpg files would leak into %TEMP% on every launch.
     private static string GetStableTempPath(string? monitorDevicePath)
     {
-        // Hash the device path so multi-monitor setups get separate files.
-        string suffix = monitorDevicePath is null
-            ? "all"
-            : ((uint)monitorDevicePath.GetHashCode()).ToString("X8");
+        string suffix = monitorDevicePath is null ? "all" : StableHash.Short(monitorDevicePath);
         return Path.Combine(ScaledTempDir, $"wallpaper_{suffix}.jpg");
     }
 
@@ -145,9 +144,12 @@ public class WallpaperService
             wallpaper.SetPosition(ToDesktopPosition(fit));
             AppLogger.Info($"SetWallpaper complete → {Path.GetFileName(imagePath)}");
         }
-        catch (COMException ex)
+        catch (Exception ex)
         {
-            AppLogger.Error($"SetWallpaper COM error (HRESULT 0x{ex.HResult:X8}) for '{imagePath}'", ex);
+            // Log COMException with HRESULT context; other types (e.g. InvalidComObjectException
+            // after a session disconnect) are still surfaced — this used to swallow them silently.
+            var hresult = ex is COMException com ? $" (HRESULT 0x{com.HResult:X8})" : "";
+            AppLogger.Error($"SetWallpaper failed{hresult} for '{imagePath}'", ex);
             throw;
         }
         finally
