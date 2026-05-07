@@ -14,6 +14,11 @@ internal static class AppLogger
     private static string LogFile =>
         Path.Combine(LogDir, $"{DateTime.Now:yyyy-MM-dd}.log");
 
+    // Serializes file writes across threads. Without this, two threads calling
+    // File.AppendAllText concurrently can throw IOException ("file in use") and
+    // lose log lines — and we log from many threads (timers, scans, watchers).
+    private static readonly object _writeLock = new();
+
     static AppLogger()
     {
         Directory.CreateDirectory(LogDir);
@@ -28,10 +33,11 @@ internal static class AppLogger
 
     private static void Write(string level, string message)
     {
-        var line = $"{DateTime.Now:HH:mm:ss.fff} [{level}] {message}";
+        var line = $"{DateTime.Now:HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
         try
         {
-            File.AppendAllText(LogFile, line + Environment.NewLine);
+            lock (_writeLock)
+                File.AppendAllText(LogFile, line);
         }
         catch (Exception ex)
         {

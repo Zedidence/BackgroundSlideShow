@@ -95,6 +95,10 @@ public class AppSettings
         catch (Exception ex) { AppLogger.Warn($"Settings load failed — using defaults. {ex.Message}"); }
     }
 
+    // Save can be called from any thread (UI button handlers, background scans, etc.).
+    // Serialize the writes so two callers can't truncate each other's output mid-flight.
+    private static readonly object _saveLock = new();
+
     public void Save()
     {
         try
@@ -114,7 +118,17 @@ public class AppSettings
                     LockScreenFitMode         = LockScreenFitMode,
                 },
                 new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+
+            // Atomic write: write to a sibling temp file, then File.Move replaces the
+            // target in a single filesystem operation. A crash mid-write leaves the
+            // previous settings.json intact instead of producing a zero-byte JSON that
+            // Load() would silently fall back to defaults for.
+            var tempPath = SettingsPath + ".tmp";
+            lock (_saveLock)
+            {
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, SettingsPath, overwrite: true);
+            }
         }
         catch (Exception ex) { AppLogger.Warn($"Settings save failed. {ex.Message}"); }
     }

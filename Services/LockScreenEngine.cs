@@ -28,13 +28,19 @@ public sealed class LockScreenEngine : IDisposable
 
     private readonly LockScreenService _lockScreenService;
     private readonly AppSettings       _appSettings;
-    private readonly Random            _rng = new();
 
     private List<string>             _deck    = new();
     private int                      _deckPos = 0;
     private int                      _collageCountdown = 0; // decrements per transition; collage fires at 0
     private System.Timers.Timer?     _timer;
     private readonly object          _lock = new();
+
+    // Tracks the in-flight ApplyCurrentAsync so Stop()/Dispose() can wait for it
+    // before tearing down. Without this, a tick mid-flight would still call
+    // SetLockScreenImageAsync on a stopped engine.
+    private Task? _inFlightApply;
+    private CancellationTokenSource _cts = new();
+    private bool _disposed;
 
     public bool   IsRunning       { get; private set; }
     public int    ImageCount      => _deck.Count;
@@ -53,7 +59,7 @@ public sealed class LockScreenEngine : IDisposable
 
     public async Task StartAsync()
     {
-        StopTimer();
+        await StopAsync();
 
         var folder = _appSettings.LockScreenFolderPath;
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
@@ -76,6 +82,7 @@ public sealed class LockScreenEngine : IDisposable
 
         lock (_lock)
         {
+            _cts              = new CancellationTokenSource();
             _deck             = Shuffle(files);
             _deckPos          = 0;
             _collageCountdown = NextCollageCountdown();
@@ -83,21 +90,35 @@ public sealed class LockScreenEngine : IDisposable
         }
 
         // Apply the first image immediately (always a single on first start), then begin timer.
-        await ApplyCurrentAsync();
+        await ApplyCurrentTrackedAsync();
         StartTimer();
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void Stop()
+    /// <summary>Stops the timer and waits for any in-flight wallpaper apply to finish.</summary>
+    public async Task StopAsync()
     {
-        StopTimer();
+        Task? toAwait;
         lock (_lock)
         {
+            StopTimerLocked();
+            _cts.Cancel();
+            toAwait = _inFlightApply;
             _deck.Clear();
             IsRunning = false;
         }
+
+        if (toAwait is not null)
+        {
+            try { await toAwait; }
+            catch { /* already logged in tracker */ }
+        }
+
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>Synchronous shim for callers that can't await (UI button handlers using fire-and-forget).</summary>
+    public void Stop() => _ = StopAsync();
 
     public async Task NextAsync()
     {
@@ -106,14 +127,22 @@ public sealed class LockScreenEngine : IDisposable
             if (!IsRunning || _deck.Count <= 1) return;
             _deckPos = (_deckPos + 1) % _deck.Count;
         }
-        await ApplyCurrentAsync();
+        await ApplyCurrentTrackedAsync();
         RestartTimer();
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    private async Task ApplyCurrentAsync()
+    private Task ApplyCurrentTrackedAsync()
+    {
+        var token = _cts.Token;
+        var task = ApplyCurrentAsync(token);
+        lock (_lock) { _inFlightApply = task; }
+        return task;
+    }
+
+    private async Task ApplyCurrentAsync(CancellationToken ct)
     {
         string singlePath   = "";
         bool   shouldCollage = false;
@@ -133,9 +162,12 @@ public sealed class LockScreenEngine : IDisposable
             }
         }
 
+        if (ct.IsCancellationRequested) return;
+
         if (shouldCollage)
         {
-            var collagePath = await BuildCollageAsync();
+            var collagePath = await BuildCollageAsync(ct);
+            if (ct.IsCancellationRequested) return;
             if (collagePath != null)
             {
                 await _lockScreenService.SetLockScreenImageAsync(collagePath);
@@ -144,7 +176,7 @@ public sealed class LockScreenEngine : IDisposable
             // Fall through to single image if collage composition failed.
         }
 
-        await ApplySingleAsync(singlePath);
+        await ApplySingleAsync(singlePath, ct);
     }
 
     /// <summary>
@@ -152,7 +184,7 @@ public sealed class LockScreenEngine : IDisposable
     /// user's chosen FitMode, then sets it as the lock screen.
     /// Falls back to the raw file if composition fails.
     /// </summary>
-    private async Task ApplySingleAsync(string sourcePath)
+    private async Task ApplySingleAsync(string sourcePath, CancellationToken ct)
     {
         var fitMode = _appSettings.LockScreenFitMode;
         var processedPath = await Task.Run<string>(() =>
@@ -170,7 +202,9 @@ public sealed class LockScreenEngine : IDisposable
                 AppLogger.Warn($"ComposeSingle failed for '{sourcePath}' — {ex.Message}");
                 return sourcePath;
             }
-        });
+        }, ct);
+
+        if (ct.IsCancellationRequested) return;
         await _lockScreenService.SetLockScreenImageAsync(processedPath);
     }
 
@@ -178,7 +212,7 @@ public sealed class LockScreenEngine : IDisposable
     /// Composites a collage on a thread-pool thread and returns the path to
     /// the temporary JPEG, or <c>null</c> if composition fails.
     /// </summary>
-    private Task<string?> BuildCollageAsync()
+    private Task<string?> BuildCollageAsync(CancellationToken ct)
     {
         List<string> images;
 
@@ -186,15 +220,11 @@ public sealed class LockScreenEngine : IDisposable
         {
             if (_deck.Count < 2) return Task.FromResult<string?>(null);
 
-            int count = CollageComposer.PickImageCount(_deck.Count, _rng);
+            int count = CollageComposer.PickImageCount(_deck.Count, Random.Shared);
             images = Enumerable.Range(0, count)
                 .Select(i => _deck[(_deckPos + i) % _deck.Count])
                 .ToList();
         }
-
-        // Capture rng ref for use inside Task.Run (lock-screen engine is single-threaded
-        // for advances, so no contention risk).
-        var rng = _rng;
 
         return Task.Run<string?>(() =>
         {
@@ -203,7 +233,7 @@ public sealed class LockScreenEngine : IDisposable
                 var (w, h) = GetScreenSize();
                 if (w <= 0 || h <= 0) { w = 1920; h = 1080; }
 
-                var (bestLayout, orderedPaths) = CollageComposer.PickBestLayoutFromPaths(images, w, h, rng);
+                var (bestLayout, orderedPaths) = CollageComposer.PickBestLayoutFromPaths(images, w, h, Random.Shared);
 
                 Directory.CreateDirectory(Path.GetDirectoryName(CollageTempPath)!);
                 CollageComposer.Compose(bestLayout, orderedPaths, w, h, CollageTempPath);
@@ -215,29 +245,41 @@ public sealed class LockScreenEngine : IDisposable
                 AppLogger.Error("CollageComposer.Compose failed", ex);
                 return null;
             }
-        });
+        }, ct);
     }
 
+    // async void is necessary because System.Timers.Timer.Elapsed is a sync event,
+    // but we wrap the whole body in try/catch so an exception never reaches
+    // AppDomain.UnhandledException and the timer keeps ticking with sane state.
     private async void OnTimerElapsed(object? source, System.Timers.ElapsedEventArgs e)
     {
-        lock (_lock)
+        try
         {
-            if (!IsRunning || _deck.Count == 0) return;
-            _deckPos = (_deckPos + 1) % _deck.Count;
+            lock (_lock)
+            {
+                if (!IsRunning || _deck.Count == 0) return;
+                _deckPos = (_deckPos + 1) % _deck.Count;
+            }
+            await ApplyCurrentTrackedAsync();
+            StateChanged?.Invoke(this, EventArgs.Empty);
         }
-        await ApplyCurrentAsync();
-        StateChanged?.Invoke(this, EventArgs.Empty);
+        catch (OperationCanceledException) { /* engine stopping */ }
+        catch (Exception ex) { AppLogger.Error("LockScreenEngine timer tick failed", ex); }
     }
 
     private void StartTimer()
     {
-        var ms = Math.Max(1, _appSettings.LockScreenIntervalMinutes) * 60_000.0;
-        _timer = new System.Timers.Timer(ms) { AutoReset = true };
-        _timer.Elapsed += OnTimerElapsed;
-        _timer.Start();
+        lock (_lock)
+        {
+            StopTimerLocked();
+            var ms = Math.Max(1, _appSettings.LockScreenIntervalMinutes) * 60_000.0;
+            _timer = new System.Timers.Timer(ms) { AutoReset = true };
+            _timer.Elapsed += OnTimerElapsed;
+            _timer.Start();
+        }
     }
 
-    private void StopTimer()
+    private void StopTimerLocked()
     {
         if (_timer is null) return;
         _timer.Stop();
@@ -248,20 +290,18 @@ public sealed class LockScreenEngine : IDisposable
 
     private void RestartTimer()
     {
-        StopTimer();
         if (IsRunning) StartTimer();
     }
 
     /// <summary>Returns a random countdown interval matching Windows' cadence (4–8 singles).</summary>
-    private int NextCollageCountdown() => _rng.Next(4, 9);
+    private static int NextCollageCountdown() => Random.Shared.Next(4, 9);
 
     private static List<string> Shuffle(List<string> source)
     {
         var list = new List<string>(source);
-        var rng  = new Random();
         for (int i = list.Count - 1; i > 0; i--)
         {
-            int j = rng.Next(i + 1);
+            int j = Random.Shared.Next(i + 1);
             (list[i], list[j]) = (list[j], list[i]);
         }
         return list;
@@ -276,5 +316,13 @@ public sealed class LockScreenEngine : IDisposable
     private static (int W, int H) GetScreenSize() =>
         (GetSystemMetrics(0), GetSystemMetrics(1));
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        // Block briefly so any in-flight wallpaper apply finishes before AppData is unwound.
+        try { StopAsync().GetAwaiter().GetResult(); }
+        catch { /* shutting down */ }
+        _cts.Dispose();
+    }
 }
