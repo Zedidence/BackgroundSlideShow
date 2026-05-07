@@ -96,6 +96,12 @@ public class AppDbContext : DbContext
     private static async Task AddColumnIfMissingAsync(
         System.Data.Common.DbConnection conn, string table, string column, string definition)
     {
+        // Guard against accidentally introducing a SQL-injection vector here later.
+        // ALTER TABLE has no parameter binding for identifiers, so we only accept
+        // simple SQL identifiers for the table and column names.
+        if (!IsSafeIdentifier(table))  throw new ArgumentException($"Unsafe table name '{table}'", nameof(table));
+        if (!IsSafeIdentifier(column)) throw new ArgumentException($"Unsafe column name '{column}'", nameof(column));
+
         await using var pragma = conn.CreateCommand();
         pragma.CommandText = $"PRAGMA table_info({table})";
         var existing = new List<string>();
@@ -111,6 +117,15 @@ public class AppDbContext : DbContext
             alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}";
             await alter.ExecuteNonQueryAsync();
         }
+    }
+
+    private static bool IsSafeIdentifier(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        if (!(char.IsLetter(s[0]) || s[0] == '_')) return false;
+        for (int i = 1; i < s.Length; i++)
+            if (!(char.IsLetterOrDigit(s[i]) || s[i] == '_')) return false;
+        return true;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
