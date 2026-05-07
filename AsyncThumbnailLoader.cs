@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
@@ -20,22 +19,65 @@ namespace BackgroundSlideShow;
 public static class AsyncThumbnailLoader
 {
     // ── In-memory bitmap cache ────────────────────────────────────────────────
-    // Key: resolved load path (disk-cache thumb path, or original on cache miss).
-    // Max 600 entries; drop-all eviction to avoid LRU bookkeeping overhead.
-    // With 200 px JPEG thumbnails (~160 KB decoded each) the worst case is ~96 MB.
+    // Bounded LRU keyed by load path (disk-cache thumb path, or original on cache miss).
+    // Replaces the prior "drop everything when full" strategy, which produced visible
+    // GC pauses by freeing ~96 MB of frozen bitmaps in one go on every overflow.
 
     private const int MaxCacheEntries = 600;
 
-    private static readonly ConcurrentDictionary<string, BitmapImage> _memCache =
+    private static readonly LinkedList<(string Key, BitmapImage Bitmap)> _lruList = new();
+    private static readonly Dictionary<string, LinkedListNode<(string Key, BitmapImage Bitmap)>> _lruIndex =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _lruLock = new();
 
-    internal static void ClearMemoryCache() => _memCache.Clear();
+    internal static void ClearMemoryCache()
+    {
+        lock (_lruLock)
+        {
+            _lruList.Clear();
+            _lruIndex.Clear();
+        }
+    }
+
+    private static bool TryGetCached(string key, out BitmapImage bmp)
+    {
+        lock (_lruLock)
+        {
+            if (_lruIndex.TryGetValue(key, out var node))
+            {
+                _lruList.Remove(node);
+                _lruList.AddFirst(node);
+                bmp = node.Value.Bitmap;
+                return true;
+            }
+        }
+        bmp = null!;
+        return false;
+    }
 
     private static void CacheSet(string key, BitmapImage bmp)
     {
-        if (_memCache.Count >= MaxCacheEntries)
-            _memCache.Clear();   // simple drop-all; acceptable for a gallery cache
-        _memCache[key] = bmp;
+        lock (_lruLock)
+        {
+            if (_lruIndex.TryGetValue(key, out var existing))
+            {
+                _lruList.Remove(existing);
+                existing.Value = (key, bmp);
+                _lruList.AddFirst(existing);
+                return;
+            }
+
+            var node = new LinkedListNode<(string, BitmapImage)>((key, bmp));
+            _lruList.AddFirst(node);
+            _lruIndex[key] = node;
+
+            if (_lruList.Count > MaxCacheEntries)
+            {
+                var last = _lruList.Last!;
+                _lruList.RemoveLast();
+                _lruIndex.Remove(last.Value.Key);
+            }
+        }
     }
 
     // ── Attached property: SourcePath ─────────────────────────────────────────
@@ -88,7 +130,7 @@ public static class AsyncThumbnailLoader
         bool cacheHit = ThumbnailCacheService.TryGetCachedPath(path, out var loadPath);
 
         // ── Fast path: bitmap already decoded and in memory ──────────────────
-        if (_memCache.TryGetValue(loadPath, out var cached))
+        if (TryGetCached(loadPath, out var cached))
         {
             img.Source = cached;
             if (!cacheHit)
@@ -153,10 +195,15 @@ public static class AsyncThumbnailLoader
                 bmp = null;
             }
 
+            // Skip caching if the load was cancelled — the user has scrolled past this
+            // cell and the bitmap may belong to a stale path. Caching it would pollute
+            // the LRU with images we'll never display.
             if (token.IsCancellationRequested) return;
             if (bmp != null) CacheSet(loadPath, bmp);
 
-            dispatcher.BeginInvoke(
+            // BeginInvoke schedules the work and returns a DispatcherOperation — we don't
+            // need to await it, the discard makes that explicit and silences CS4014.
+            _ = dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Background,
                 () =>
                 {

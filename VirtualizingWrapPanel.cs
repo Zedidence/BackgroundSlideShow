@@ -45,6 +45,13 @@ public class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     private const double ScrollEaseFactor = 0.25;   // 0→1; higher = snappier
     private const double ScrollEpsilon    = 0.5;     // px threshold to snap
 
+    public VirtualizingWrapPanel()
+    {
+        // Stop the scroll timer when the panel is removed from the visual tree —
+        // otherwise it keeps ticking InvalidateMeasure on a disconnected element.
+        Unloaded += (_, _) => _smoothScrollTimer?.Stop();
+    }
+
     private int GetItemCount()
     {
         var generator = ItemContainerGenerator as ItemContainerGenerator;
