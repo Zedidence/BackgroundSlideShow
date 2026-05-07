@@ -13,7 +13,7 @@ public partial class App : Application
 {
     // Poor-man's DI — wire up services manually
     private AppSettings? _appSettings;
-    private AppDbContext? _db;
+    private AppDbContextFactory? _dbFactory;
     private MonitorService? _monitorService;
     private WallpaperService? _wallpaperService;
     private LockScreenService? _lockScreenService;
@@ -51,6 +51,17 @@ public partial class App : Application
         {
             base.OnStartup(e);
 
+            // Cap the ImageSharp memory pool so a 16K-pixel source decode can't pin
+            // hundreds of MB after the work is done. Default pooling keeps blocks
+            // alive aggressively, which made memory after a single large wallpaper
+            // never settle back down.
+            SixLabors.ImageSharp.Configuration.Default.MemoryAllocator =
+                SixLabors.ImageSharp.Memory.MemoryAllocator.Create(
+                    new SixLabors.ImageSharp.Memory.MemoryAllocatorOptions
+                    {
+                        AllocationLimitMegabytes = 256,
+                    });
+
             // Apply WPF UI dark theme globally
             ApplicationThemeManager.Apply(ApplicationTheme.Dark);
 
@@ -62,8 +73,8 @@ public partial class App : Application
             // with no disk I/O during gallery scroll.
             ThumbnailCacheService.PreloadCacheIndex();
 
-            AppLogger.Info("Creating AppDbContext");
-            _db = new AppDbContext();
+            AppLogger.Info("Creating AppDbContextFactory");
+            _dbFactory = new AppDbContextFactory();
 
             // WallpaperService must be created before MonitorService so it can
             // resolve IDesktopWallpaper device paths during monitor enumeration.
@@ -74,7 +85,7 @@ public partial class App : Application
             _monitorService = new MonitorService(_wallpaperService);
 
             AppLogger.Info("Creating LibraryService");
-            _libraryService = new LibraryService(_db);
+            _libraryService = new LibraryService(_dbFactory);
 
             AppLogger.Info("Creating ImageSelectorService");
             _imageSelector = new ImageSelectorService();
@@ -161,7 +172,7 @@ public partial class App : Application
             _lockScreenVm      = new ViewModels.LockScreenViewModel(_lockScreenEngine, _appSettings);
 
             AppLogger.Info("Creating MainViewModel");
-            _mainVm = new MainViewModel(_db, _monitorService, _engine, _libraryService, _gifPlayerVm, _lockScreenVm);
+            _mainVm = new MainViewModel(_dbFactory, _monitorService, _engine, _libraryService, _gifPlayerVm, _lockScreenVm);
 
             AppLogger.Info("Creating MainWindow");
             _mainWindow = new MainWindow(_mainVm, _appSettings);
@@ -196,15 +207,16 @@ public partial class App : Application
         if (Resources["TrayIcon"] is TaskbarIcon tray)
             tray.Dispose();
 
-        // Bugs 3 & 4 fix: dispose VMs before their engines so event handlers are
-        // unsubscribed before the engines raise any final StateChanged events on teardown.
+        // Dispose VMs before their engines so event handlers are unsubscribed before
+        // the engines raise any final StateChanged events on teardown.
         _mainVm?.Dispose();
         _lockScreenVm?.Dispose();
         _gifPlayerVm?.Dispose();
         _lockScreenEngine?.Dispose();
         _engine?.Dispose();
         _libraryService?.Dispose();
-        _db?.Dispose();
+        // No shared DbContext to dispose — each operation creates its own short-lived
+        // context via _dbFactory and disposes it in a `using` block.
 
         base.OnExit(e);
     }
@@ -255,8 +267,8 @@ public partial class App : Application
         _libraryService?.Dispose();
         _libraryService = null;
 
-        _db?.Dispose();
-        _db = null;
+        // Drop the factory so any straggling code can't open new DB connections during teardown.
+        _dbFactory = null;
 
         // Remove startup registry entry.
         if (_appSettings is not null)

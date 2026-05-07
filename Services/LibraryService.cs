@@ -14,7 +14,7 @@ public class LibraryService : ILibraryService
         new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".heif" }
             .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    private readonly AppDbContext _db;
+    private readonly AppDbContextFactory _dbFactory;
     // Keyed by folder path — ensures one watcher per folder and allows targeted cleanup.
     private readonly Dictionary<string, FileSystemWatcher> _watchers =
         new(StringComparer.OrdinalIgnoreCase);
@@ -26,9 +26,9 @@ public class LibraryService : ILibraryService
 
     public event EventHandler? LibraryChanged;
 
-    public LibraryService(AppDbContext db)
+    public LibraryService(AppDbContextFactory dbFactory)
     {
-        _db = db;
+        _dbFactory = dbFactory;
     }
 
     // ── Folder management ─────────────────────────────────────────────────────
@@ -36,12 +36,13 @@ public class LibraryService : ILibraryService
     public async Task<LibraryFolder> AddFolderAsync(string path, CancellationToken ct = default)
     {
         path = Path.GetFullPath(path);
-        var folder = await _db.LibraryFolders.FirstOrDefaultAsync(f => f.Path == path, ct);
+        await using var db = _dbFactory.Create();
+        var folder = await db.LibraryFolders.FirstOrDefaultAsync(f => f.Path == path, ct);
         if (folder is null)
         {
             folder = new LibraryFolder { Path = path };
-            _db.LibraryFolders.Add(folder);
-            await _db.SaveChangesAsync(ct);
+            db.LibraryFolders.Add(folder);
+            await db.SaveChangesAsync(ct);
         }
         AttachWatcher(folder);
         return folder;
@@ -49,7 +50,8 @@ public class LibraryService : ILibraryService
 
     public async Task RemoveFolderAsync(int folderId)
     {
-        var folder = await _db.LibraryFolders.FindAsync(folderId);
+        await using var db = _dbFactory.Create();
+        var folder = await db.LibraryFolders.FindAsync(folderId);
         if (folder is null) return;
 
         // Stop and dispose the watcher so it no longer fires events for this folder.
@@ -59,8 +61,8 @@ public class LibraryService : ILibraryService
             _watchers.Remove(folder.Path);
         }
 
-        _db.LibraryFolders.Remove(folder);
-        await _db.SaveChangesAsync();
+        db.LibraryFolders.Remove(folder);
+        await db.SaveChangesAsync();
         LibraryChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -70,40 +72,48 @@ public class LibraryService : ILibraryService
         foreach (var w in _watchers.Values) w.Dispose();
         _watchers.Clear();
 
-        var folders = await _db.LibraryFolders.ToListAsync();
-        _db.LibraryFolders.RemoveRange(folders);
-        await _db.SaveChangesAsync();
+        await using var db = _dbFactory.Create();
+        var folders = await db.LibraryFolders.ToListAsync();
+        db.LibraryFolders.RemoveRange(folders);
+        await db.SaveChangesAsync();
         LibraryChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Returns all folders paired with their indexed image count.</summary>
     public async Task<List<(LibraryFolder Folder, int ImageCount)>> GetFoldersWithCountAsync()
     {
-        // Use a fresh context so this read doesn't conflict with concurrent scan or save operations.
-        await using var db = new AppDbContext();
-        var rows = await db.LibraryFolders
-            .OrderBy(f => f.Path)
-            .Select(f => new { Folder = f, Count = f.Images.Count() })
-            .ToListAsync();
-        return rows.Select(r => (r.Folder, r.Count)).ToList();
+        await using var db = _dbFactory.Create();
+
+        // Single GROUP BY round-trip instead of N correlated COUNT subqueries.
+        var counts = await db.Images
+            .GroupBy(i => i.LibraryFolderId)
+            .Select(g => new { FolderId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.FolderId, x => x.Count);
+
+        var folders = await db.LibraryFolders.OrderBy(f => f.Path).ToListAsync();
+        return folders
+            .Select(f => (f, counts.TryGetValue(f.Id, out var c) ? c : 0))
+            .ToList();
     }
 
     /// <summary>Persists the IsEnabled flag for a folder.</summary>
     public async Task SetFolderEnabledAsync(int folderId, bool isEnabled)
     {
-        var folder = await _db.LibraryFolders.FindAsync(folderId);
+        await using var db = _dbFactory.Create();
+        var folder = await db.LibraryFolders.FindAsync(folderId);
         if (folder is null) return;
         folder.IsEnabled = isEnabled;
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
     }
 
     /// <summary>Toggles the IsExcluded flag on an image entry and persists it.</summary>
     public async Task SetImageExcludedAsync(int imageId, bool isExcluded)
     {
-        var image = await _db.Images.FindAsync(imageId);
+        await using var db = _dbFactory.Create();
+        var image = await db.Images.FindAsync(imageId);
         if (image is null) return;
         image.IsExcluded = isExcluded;
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
         LibraryChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -111,7 +121,7 @@ public class LibraryService : ILibraryService
 
     public async Task<List<int>> GetFolderAssignmentsAsync(int monitorConfigId)
     {
-        await using var db = new AppDbContext();
+        await using var db = _dbFactory.Create();
         return await db.MonitorFolderAssignments
             .Where(a => a.MonitorConfigId == monitorConfigId)
             .Select(a => a.FolderId)
@@ -121,20 +131,21 @@ public class LibraryService : ILibraryService
     public async Task SetFolderAssignmentsAsync(int monitorConfigId, IEnumerable<int> folderIds)
     {
         var folderIdSet = folderIds.ToHashSet();
-        var existing = await _db.MonitorFolderAssignments
+        await using var db = _dbFactory.Create();
+        var existing = await db.MonitorFolderAssignments
             .Where(a => a.MonitorConfigId == monitorConfigId)
             .ToListAsync();
 
-        _db.MonitorFolderAssignments.RemoveRange(existing);
+        db.MonitorFolderAssignments.RemoveRange(existing);
         foreach (var folderId in folderIdSet)
         {
-            _db.MonitorFolderAssignments.Add(new Models.MonitorFolderAssignment
+            db.MonitorFolderAssignments.Add(new Models.MonitorFolderAssignment
             {
                 MonitorConfigId = monitorConfigId,
                 FolderId = folderId,
             });
         }
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
     }
 
     // ── Scanning ──────────────────────────────────────────────────────────────
@@ -142,7 +153,11 @@ public class LibraryService : ILibraryService
     public async Task ScanAllFoldersAsync(IProgress<ScanProgress>? progress = null,
                                           CancellationToken ct = default)
     {
-        var folders = await _db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync(ct).ConfigureAwait(false);
+        List<LibraryFolder> folders;
+        await using (var db = _dbFactory.Create())
+        {
+            folders = await db.LibraryFolders.Where(f => f.IsEnabled).ToListAsync(ct).ConfigureAwait(false);
+        }
         foreach (var folder in folders)
             await ScanFolderAsync(folder, progress, fireEvent: false, ct).ConfigureAwait(false);
         LibraryChanged?.Invoke(this, EventArgs.Empty);
@@ -158,17 +173,23 @@ public class LibraryService : ILibraryService
                 .Where(f => SupportedExtensions.Contains(Path.GetExtension(f)))
                 .ToList(), ct).ConfigureAwait(false);
 
-        var existing = await _db.Images
-            .Where(i => i.LibraryFolderId == folder.Id)
+        await using var db = _dbFactory.Create();
+
+        // Re-attach the (possibly detached) folder so SaveChanges can persist LastScanned.
+        var trackedFolder = await db.LibraryFolders.FindAsync(new object?[] { folder.Id }, ct).ConfigureAwait(false);
+        if (trackedFolder is null) return; // folder was removed mid-scan
+
+        var existing = await db.Images
+            .Where(i => i.LibraryFolderId == trackedFolder.Id)
             .ToDictionaryAsync(i => i.FilePath, ct).ConfigureAwait(false);
 
         var seen = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
 
-        var (toAdd, toUpdate) = await Task.Run(() => ScanDiskFiles(folder.Id, files, existing, progress, ct), ct).ConfigureAwait(false);
-        ApplyDatabaseChanges(folder, toAdd, toUpdate, seen, existing);
+        var (toAdd, toUpdate) = await Task.Run(() => ScanDiskFiles(trackedFolder.Id, files, existing, progress, ct), ct).ConfigureAwait(false);
+        ApplyDatabaseChanges(db, toAdd, toUpdate, seen, existing);
 
-        folder.LastScanned = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        trackedFolder.LastScanned = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
         if (fireEvent) LibraryChanged?.Invoke(this, EventArgs.Empty);
 
         // Generate disk thumbnails for new/changed images in the background.
@@ -250,8 +271,8 @@ public class LibraryService : ILibraryService
     /// <summary>
     /// Applies the results of a disk scan to the EF Core change tracker (single-threaded).
     /// </summary>
-    private void ApplyDatabaseChanges(
-        LibraryFolder folder,
+    private static void ApplyDatabaseChanges(
+        AppDbContext db,
         ConcurrentBag<ImageEntry> toAdd,
         ConcurrentBag<(ImageEntry Entry, FileInfo Info, int W, int H)> toUpdate,
         HashSet<string> seen,
@@ -266,12 +287,12 @@ public class LibraryService : ILibraryService
         }
 
         foreach (var entry in toAdd)
-            _db.Images.Add(entry);
+            db.Images.Add(entry);
 
         foreach (var (path, entry) in existing)
         {
             if (!seen.Contains(path))
-                _db.Images.Remove(entry);
+                db.Images.Remove(entry);
         }
     }
 
@@ -289,14 +310,13 @@ public class LibraryService : ILibraryService
 
     public async Task<List<ImageEntry>> GetAllImagesAsync(CancellationToken ct = default)
     {
-        // Fresh context — this is called from a background Task in SlideshowEngine and can race with scans.
-        await using var db = new AppDbContext();
-        return await db.Images.ToListAsync(ct);
+        await using var db = _dbFactory.Create();
+        return await db.Images.AsNoTracking().ToListAsync(ct);
     }
 
     public async Task<(int Total, int Excluded)> GetImageCountsAsync(CancellationToken ct = default)
     {
-        await using var db = new AppDbContext();
+        await using var db = _dbFactory.Create();
         var total    = await db.Images.CountAsync(ct);
         var excluded = await db.Images.CountAsync(i => i.IsExcluded, ct);
         return (total, excluded);
@@ -316,9 +336,8 @@ public class LibraryService : ILibraryService
         string sortOrder,
         CancellationToken ct = default)
     {
-        // Fresh context — called from gallery VM which can race with scans triggered by LibraryChanged.
-        await using var db = new AppDbContext();
-        IQueryable<ImageEntry> q = db.Images;
+        await using var db = _dbFactory.Create();
+        IQueryable<ImageEntry> q = db.Images.AsNoTracking();
 
         // Orientation
         q = orientationFilter switch
@@ -394,8 +413,8 @@ public class LibraryService : ILibraryService
                 {
                     await Task.Delay(500, cts.Token);
 
-                    // Bug 7 fix: RemoveFolderAsync disposes the watcher (preventing new events)
-                    // but a task already in the 500ms delay will still reach here.  If the folder
+                    // RemoveFolderAsync disposes the watcher (preventing new events)
+                    // but a task already in the 500ms delay will still reach here. If the folder
                     // is no longer registered, skip the scan to avoid touching a deleted DB entity.
                     lock (_fileEventDebounce)
                     {
@@ -413,6 +432,7 @@ public class LibraryService : ILibraryService
                     }
                 }
                 catch (OperationCanceledException) { /* superseded by a newer event */ }
+                catch (Exception ex) { AppLogger.Error($"Debounced scan failed for '{folder.Path}'", ex); }
                 finally
                 {
                     lock (_fileEventDebounce)

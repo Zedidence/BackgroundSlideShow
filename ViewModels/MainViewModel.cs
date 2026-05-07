@@ -8,10 +8,16 @@ namespace BackgroundSlideShow.ViewModels;
 
 public partial class MainViewModel : ObservableObject, IDisposable
 {
-    private readonly AppDbContext _db;
+    private readonly AppDbContextFactory _dbFactory;
     private readonly MonitorService _monitorService;
     private readonly SlideshowEngine _engine;
     private readonly ILibraryService _libraryService;
+
+    // Per-config debounced save: a slider drag fires PropertyChanged on every pixel,
+    // which used to translate into one SaveChangesAsync per pixel. Coalesce into a single
+    // write 400 ms after the user stops adjusting.
+    private readonly Dictionary<int, CancellationTokenSource> _configSaveDebounce = new();
+    private const int ConfigSaveDebounceMs = 400;
 
     [ObservableProperty]
     private LibraryViewModel _library;
@@ -26,14 +32,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public LockScreenViewModel  LockScreen { get; }
 
     public MainViewModel(
-        AppDbContext db,
+        AppDbContextFactory dbFactory,
         MonitorService monitorService,
         SlideshowEngine engine,
         ILibraryService libraryService,
         GifPlayerViewModel gifPlayer,
         LockScreenViewModel lockScreen)
     {
-        _db = db;
+        _dbFactory = dbFactory;
         _monitorService = monitorService;
         _engine = engine;
         _libraryService = libraryService;
@@ -47,7 +53,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task InitializeAsync()
     {
         AppLogger.Info("InitializeAsync: EnsureSchema");
-        await _db.EnsureSchemaAsync();
+        await using (var db = _dbFactory.Create())
+            await db.EnsureSchemaAsync();
 
         AppLogger.Info("InitializeAsync: RefreshMonitors");
         await RefreshMonitorsAsync();
@@ -62,10 +69,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private async Task RefreshMonitorsAsync()
     {
         var hw = _monitorService.GetMonitors();
-        var configs = await _db.MonitorConfigs.ToListAsync();
 
-        // Bug 7: dispose old VMs to stop their countdown timers
-        // Bug 8: unsubscribe from config property changes before clearing
+        await using var db = _dbFactory.Create();
+        var configs = await db.MonitorConfigs.ToListAsync();
+
+        // Dispose old VMs to stop their countdown timers, and unsubscribe from config
+        // property changes before clearing so we never accumulate duplicate handlers.
         foreach (var vm in Monitors)
         {
             vm.Config.PropertyChanged -= OnConfigPropertyChanged;
@@ -80,8 +89,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (cfg is null)
             {
                 cfg = new Models.MonitorConfig { MonitorId = m.DeviceId };
-                _db.MonitorConfigs.Add(cfg);
-                await _db.SaveChangesAsync();
+                db.MonitorConfigs.Add(cfg);
+                await db.SaveChangesAsync();
             }
             cfg.PropertyChanged += OnConfigPropertyChanged;
             Monitors.Add(new MonitorViewModel(m, cfg, _engine, _libraryService, i + 1));
@@ -90,19 +99,53 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Library.SetMonitors(Monitors);
     }
 
-    // Bug 8+9: save config changes to DB; update timer interval live when IntervalSeconds changes
+    // Save config changes to DB; update timer interval live when IntervalSeconds changes.
+    // Saves are debounced per config so slider drags don't hammer the database.
     private void OnConfigPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(Models.MonitorConfig.IntervalSeconds) &&
-            sender is Models.MonitorConfig cfg)
-        {
+        if (sender is not Models.MonitorConfig cfg) return;
+
+        if (e.PropertyName == nameof(Models.MonitorConfig.IntervalSeconds))
             _engine.UpdateConfig(cfg);
+
+        ScheduleConfigSave(cfg);
+    }
+
+    private void ScheduleConfigSave(Models.MonitorConfig cfg)
+    {
+        CancellationTokenSource cts;
+        lock (_configSaveDebounce)
+        {
+            if (_configSaveDebounce.TryGetValue(cfg.Id, out var prev))
+            {
+                prev.Cancel();
+                prev.Dispose();
+            }
+            cts = new CancellationTokenSource();
+            _configSaveDebounce[cfg.Id] = cts;
         }
-        _db.SaveChangesAsync().ContinueWith(
-            t => AppLogger.Error("Failed to save monitor config", t.Exception!.GetBaseException()),
-            System.Threading.CancellationToken.None,
-            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
-            System.Threading.Tasks.TaskScheduler.Default);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(ConfigSaveDebounceMs, cts.Token);
+                await using var db = _dbFactory.Create();
+                db.MonitorConfigs.Update(cfg);
+                await db.SaveChangesAsync(cts.Token);
+            }
+            catch (OperationCanceledException) { /* superseded by a newer change */ }
+            catch (Exception ex) { AppLogger.Error("Failed to save monitor config", ex); }
+            finally
+            {
+                lock (_configSaveDebounce)
+                {
+                    if (_configSaveDebounce.TryGetValue(cfg.Id, out var cur) && cur == cts)
+                        _configSaveDebounce.Remove(cfg.Id);
+                    cts.Dispose();
+                }
+            }
+        }, CancellationToken.None);
     }
 
     [RelayCommand]
@@ -132,19 +175,36 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _engine.StopAll();
     }
 
-    // Bug 1 fix: marshal to the UI thread before reading Monitors.
+    // Marshal to the UI thread before reading Monitors.
     // AdvanceMonitor fires StateChanged from a System.Timers.Timer thread-pool thread;
     // ObservableCollection is not thread-safe for concurrent read + Clear().
-    private void OnEngineStateChanged(object? sender, SlideshowStateChangedEventArgs e) =>
-        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+    private void OnEngineStateChanged(object? sender, SlideshowStateChangedEventArgs e)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null) return; // shutting down
+        dispatcher.BeginInvoke(() =>
         {
             var vm = Monitors.FirstOrDefault(m => m.MonitorId == e.State.MonitorId);
             vm?.UpdateState(e.State);
         });
+    }
 
-    // Bug 4 fix: unsubscribe from engine event so the engine doesn't hold this VM alive.
     public void Dispose()
     {
         _engine.StateChanged -= OnEngineStateChanged;
+
+        foreach (var vm in Monitors)
+        {
+            vm.Config.PropertyChanged -= OnConfigPropertyChanged;
+            vm.Dispose();
+        }
+
+        lock (_configSaveDebounce)
+        {
+            foreach (var cts in _configSaveDebounce.Values) { cts.Cancel(); cts.Dispose(); }
+            _configSaveDebounce.Clear();
+        }
+
+        Library.Dispose();
     }
 }
