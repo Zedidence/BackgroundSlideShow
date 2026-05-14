@@ -15,11 +15,6 @@ public partial class MonitorOverviewPanel : UserControl
     {
         if (sender is not FrameworkElement fe) return;
         if (fe.DataContext is not MonitorViewModel mvm) return;
-        var vm = (DataContext ?? Window.GetWindow(this)?.DataContext) as MainViewModel;
-        if (vm is null) return;
-
-        foreach (var m in vm.Monitors) m.IsSelected = false;
-        mvm.IsSelected = true;
-        vm.SelectedMonitor = mvm;
+        (Window.GetWindow(this) as MainWindow)?.NavigateToMonitor(mvm);
     }
 }

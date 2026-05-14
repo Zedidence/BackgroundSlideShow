@@ -159,19 +159,22 @@ public partial class MainWindow : FluentWindow
         foreach (var m in _vm.Monitors) m.IsSelected = false;
     }
 
+    internal void NavigateToMonitor(MonitorViewModel mvm)
+    {
+        GalleryPanel.Visibility              = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+        MonitorContentArea.Visibility        = Visibility.Visible;
+        ClearMonitorSelection();
+        mvm.IsSelected = true;
+        _vm.SelectedMonitor = mvm;
+    }
+
     private void MonitorCard_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement fe && fe.DataContext is MonitorViewModel mvm)
-        {
-            GalleryPanel.Visibility              = Visibility.Collapsed;
-            GifPanel.Visibility                  = Visibility.Collapsed;
-            LockScreenPanel.Visibility           = Visibility.Collapsed;
-            LibraryManagementPanel.Visibility    = Visibility.Collapsed;
-            MonitorContentArea.Visibility        = Visibility.Visible;
-            ClearMonitorSelection();
-            mvm.IsSelected = true;
-            _vm.SelectedMonitor = mvm;
-        }
+            NavigateToMonitor(mvm);
     }
 
     // ── Tray ────────────────────────────────────────────────────────────────
