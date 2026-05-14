@@ -84,6 +84,8 @@ public partial class MainWindow : FluentWindow
         LockScreenPanel.Visibility           = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Collapsed;
         MonitorContentArea.Visibility        = Visibility.Visible;
+        MonitorOverviewView.Visibility       = Visibility.Visible;
+        MonitorDetailView.Visibility         = Visibility.Collapsed;
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
         ShowLibrarySidebar(true);
@@ -166,6 +168,8 @@ public partial class MainWindow : FluentWindow
         LockScreenPanel.Visibility           = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Collapsed;
         MonitorContentArea.Visibility        = Visibility.Visible;
+        MonitorOverviewView.Visibility       = Visibility.Collapsed;
+        MonitorDetailView.Visibility         = Visibility.Visible;
         ClearMonitorSelection();
         mvm.IsSelected = true;
         _vm.SelectedMonitor = mvm;

@@ -218,35 +218,17 @@
 
                     <!-- Switched views -->
                     <Grid x:Name="MonitorContentArea" Grid.Row="2">
-                        <local:MonitorOverviewPanel>
-                            <local:MonitorOverviewPanel.Style>
-                                <Style TargetType="local:MonitorOverviewPanel">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SelectedMonitor}" Value="{x:Null}">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </local:MonitorOverviewPanel.Style>
-                        </local:MonitorOverviewPanel>
+                        <local:MonitorOverviewPanel x:Name="MonitorOverviewView"
+                                                    Visibility="Visible"/>
 
-                        <ContentControl Content="{Binding SelectedMonitor}">
+                        <ContentControl x:Name="MonitorDetailView"
+                                        Content="{Binding SelectedMonitor}"
+                                        Visibility="Collapsed">
                             <ContentControl.ContentTemplate>
                                 <DataTemplate>
                                     <local:MonitorPanel/>
                                 </DataTemplate>
                             </ContentControl.ContentTemplate>
-                            <ContentControl.Style>
-                                <Style TargetType="ContentControl">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SelectedMonitor}" Value="{x:Null}">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </ContentControl.Style>
                         </ContentControl>
                     </Grid>
 
