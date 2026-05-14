@@ -88,6 +88,7 @@ if ($dotnetOk) {
 #      - SixLabors.ImageSharp                  3.1.12
 #      - H.NotifyIcon.Wpf                      2.2.0
 #      - CommunityToolkit.Mvvm                 8.3.2
+#      - WPF-UI                                4.2.0
 # ---------------------------------------------------------------------------
 Write-Step "Restoring NuGet packages..."
 

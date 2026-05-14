@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using BackgroundSlideShow.Services;
 using Wpf.Ui.Controls;
@@ -19,15 +20,21 @@ public partial class SettingsWindow : FluentWindow
         SliderTransitionDuration.Value  = _appSettings.TransitionDurationMs;
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e)
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        SaveSettings();
+    }
+
+    private void SaveSettings()
     {
         _appSettings.LaunchOnStartup      = ChkLaunchOnStartup.IsChecked == true;
         _appSettings.TransitionsEnabled   = ChkTransitionsEnabled.IsChecked == true;
         _appSettings.TransitionDurationMs = (int)SliderTransitionDuration.Value;
-
         _appSettings.Save();
-        Close();
     }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void Reset_Click(object sender, RoutedEventArgs e)
     {

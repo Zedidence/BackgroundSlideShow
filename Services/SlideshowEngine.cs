@@ -233,17 +233,18 @@ public class SlideshowEngine : IDisposable
 
                 // Pick images from deck, preferring those not in use on other monitors.
                 var collageEntries = new List<ImageEntry>(count);
+                var collageSet     = new HashSet<ImageEntry>(count);
                 for (int i = 0; collageEntries.Count < count && i < state.ShuffleDeck.Count; i++)
                 {
                     var candidate = state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count];
-                    if (!globalInUse.Contains(candidate.FilePath))
+                    if (!globalInUse.Contains(candidate.FilePath) && collageSet.Add(candidate))
                         collageEntries.Add(candidate);
                 }
                 // Fallback: fill from deck regardless of global in-use.
                 for (int i = 0; collageEntries.Count < count && i < state.ShuffleDeck.Count; i++)
                 {
                     var candidate = state.ShuffleDeck[(state.DeckIndex + i) % state.ShuffleDeck.Count];
-                    if (!collageEntries.Contains(candidate))
+                    if (collageSet.Add(candidate))
                         collageEntries.Add(candidate);
                 }
 
@@ -412,6 +413,7 @@ public class SlideshowEngine : IDisposable
                 }
             }
             catch (OperationCanceledException) { /* superseded by a newer refresh */ }
+            catch (Exception ex) { AppLogger.Error("RefreshImagePool failed", ex); }
         }, cts.Token);
     }
 

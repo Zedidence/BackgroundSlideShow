@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using BackgroundSlideShow.Models;
@@ -237,15 +238,16 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
 
     public async Task RefreshImagesAsync()
     {
-        // Cancel any already-in-flight refresh so rapid LibraryChanged events don't pile up.
-        _refreshCts?.Cancel();
-        _refreshCts?.Dispose();
+        // Swap in a fresh CTS atomically so concurrent callers (UI thread + Task.Run debounce +
+        // LibraryChanged) never race on the same reference.
         var cts = new CancellationTokenSource();
-        _refreshCts = cts;
+        var old = Interlocked.Exchange(ref _refreshCts, cts);
+        old?.Cancel();
+        old?.Dispose();
 
         try
         {
-            IsLoading = true;
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => IsLoading = true);
 
             // Run both queries concurrently; counts use cheap COUNT(*) without loading objects.
             var filteredTask = _libraryService.GetFilteredImagesAsync(
@@ -282,7 +284,7 @@ public partial class ImageGalleryViewModel : ObservableObject, IDisposable
         catch (OperationCanceledException) { /* superseded by a newer refresh */ }
         finally
         {
-            IsLoading = false;
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => IsLoading = false);
         }
     }
 

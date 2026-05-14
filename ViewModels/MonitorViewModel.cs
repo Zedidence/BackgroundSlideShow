@@ -178,11 +178,10 @@ public partial class MonitorViewModel : ObservableObject, IDisposable
 
     public void UpdateState(SlideshowState state)
     {
-        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
-        {
-            Status = state.Status;
-            CurrentImagePath = state.CurrentImage?.FilePath ?? string.Empty;
-        });
+        // Caller (MainViewModel.OnEngineStateChanged) already marshals to the UI thread
+        // via BeginInvoke — no second Dispatcher wrap needed here.
+        Status = state.Status;
+        CurrentImagePath = state.CurrentImage?.FilePath ?? string.Empty;
     }
 
     public void Dispose()

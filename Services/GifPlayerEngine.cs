@@ -77,7 +77,7 @@ public sealed class GifPlayerEngine : IDisposable
             _windows[monitor.DeviceId] = win;
             win.Show();
             win.SendToBottom();
-            win.LoadGif(firstGif);
+            _ = win.LoadGifAsync(firstGif);
         }
 
         if (_windows.Count == 0)
@@ -128,7 +128,7 @@ public sealed class GifPlayerEngine : IDisposable
         var path = _gifFiles[_gifIndex];
 
         foreach (var win in _windows.Values)
-            win.LoadGif(path);
+            _ = win.LoadGifAsync(path);
 
         // Restart so the new GIF always gets its full configured duration.
         RestartCycleTimer();

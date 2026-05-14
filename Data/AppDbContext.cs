@@ -13,8 +13,7 @@ public class AppDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var dbPath = Path.Combine(appData, "BackgroundSlideShow", "library.db");
+        var dbPath = Path.Combine(Services.AppSettings.AppDataFolder, "library.db");
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
         options.UseSqlite($"Data Source={dbPath}");
     }

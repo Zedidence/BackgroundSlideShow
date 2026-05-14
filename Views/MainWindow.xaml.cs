@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using BackgroundSlideShow.Services;
 using BackgroundSlideShow.ViewModels;
 using H.NotifyIcon;
@@ -13,6 +14,9 @@ public partial class MainWindow : FluentWindow
     private readonly MainViewModel _vm;
     private readonly AppSettings _appSettings;
 
+    private const int WM_DISPLAYCHANGE = 0x007E;
+    private System.Windows.Threading.DispatcherTimer? _displayChangeDebounce;
+
     public MainWindow(MainViewModel vm, AppSettings appSettings)
     {
         InitializeComponent();
@@ -24,14 +28,46 @@ public partial class MainWindow : FluentWindow
     protected override async void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
+
+        // Hook WM_DISPLAYCHANGE so monitor add/remove is detected without restarting the app.
+        var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        source?.AddHook(WndProc);
+
         await _vm.InitializeAsync();
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_DISPLAYCHANGE)
+        {
+            // Debounce: Windows fires multiple WM_DISPLAYCHANGE events during a single
+            // monitor change. Wait 1.5 s for the dust to settle before re-enumerating.
+            _displayChangeDebounce ??= new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(1500)
+            };
+            _displayChangeDebounce.Stop();
+            _displayChangeDebounce.Tick -= OnDisplayChangeSettled;
+            _displayChangeDebounce.Tick += OnDisplayChangeSettled;
+            _displayChangeDebounce.Start();
+        }
+        return IntPtr.Zero;
+    }
+
+    private async void OnDisplayChangeSettled(object? sender, EventArgs e)
+    {
+        _displayChangeDebounce!.Stop();
+        AppLogger.Info("WM_DISPLAYCHANGE: display configuration changed — refreshing monitors");
+        await _vm.RefreshMonitorsAsync();
     }
 
     // ── NavigationView ──────────────────────────────────────────────────────
 
-    private void RootNavigation_SelectionChanged(NavigationView sender, RoutedEventArgs args)
+    private void RootNavigation_ItemInvoked(NavigationView sender, RoutedEventArgs args)
     {
-        if (sender.SelectedItem is not NavigationViewItem item) return;
+        var item = sender.SelectedItem as NavigationViewItem
+                   ?? args.Source as NavigationViewItem;
+        if (item == null) return;
         var tag = item.Tag as string;
 
         switch (tag)
@@ -41,6 +77,9 @@ public partial class MainWindow : FluentWindow
                 break;
             case "gallery":
                 ShowGallery();
+                break;
+            case "library":
+                ShowLibraryTab();
                 break;
             case "gif":
                 ShowGifMode();
@@ -56,10 +95,11 @@ public partial class MainWindow : FluentWindow
 
     private void ShowOverview()
     {
-        GalleryPanel.Visibility       = Visibility.Collapsed;
-        GifPanel.Visibility           = Visibility.Collapsed;
-        LockScreenPanel.Visibility    = Visibility.Collapsed;
-        MonitorContentArea.Visibility = Visibility.Visible;
+        GalleryPanel.Visibility              = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+        MonitorContentArea.Visibility        = Visibility.Visible;
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
         ShowLibrarySidebar(true);
@@ -67,24 +107,37 @@ public partial class MainWindow : FluentWindow
 
     private void ShowGallery()
     {
-
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
-        MonitorContentArea.Visibility = Visibility.Collapsed;
-        GifPanel.Visibility           = Visibility.Collapsed;
-        LockScreenPanel.Visibility    = Visibility.Collapsed;
-        GalleryPanel.Visibility       = Visibility.Visible;
+        MonitorContentArea.Visibility        = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+        GalleryPanel.Visibility              = Visibility.Visible;
         ShowLibrarySidebar(true);
+    }
+
+    private void ShowLibraryTab()
+    {
+        _vm.SelectedMonitor = null;
+        ClearMonitorSelection();
+        MonitorContentArea.Visibility        = Visibility.Collapsed;
+        GalleryPanel.Visibility              = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Visible;
+        ShowLibrarySidebar(false);
     }
 
     private void ShowGifMode()
     {
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
-        MonitorContentArea.Visibility = Visibility.Collapsed;
-        GalleryPanel.Visibility       = Visibility.Collapsed;
-        LockScreenPanel.Visibility    = Visibility.Collapsed;
-        GifPanel.Visibility           = Visibility.Visible;
+        MonitorContentArea.Visibility        = Visibility.Collapsed;
+        GalleryPanel.Visibility              = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Visible;
         ShowLibrarySidebar(false);
     }
 
@@ -92,10 +145,11 @@ public partial class MainWindow : FluentWindow
     {
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
-        MonitorContentArea.Visibility = Visibility.Collapsed;
-        GalleryPanel.Visibility       = Visibility.Collapsed;
-        GifPanel.Visibility           = Visibility.Collapsed;
-        LockScreenPanel.Visibility    = Visibility.Visible;
+        MonitorContentArea.Visibility        = Visibility.Collapsed;
+        GalleryPanel.Visibility              = Visibility.Collapsed;
+        GifPanel.Visibility                  = Visibility.Collapsed;
+        LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+        LockScreenPanel.Visibility           = Visibility.Visible;
         ShowLibrarySidebar(false);
     }
 
@@ -125,10 +179,11 @@ public partial class MainWindow : FluentWindow
     {
         if (sender is FrameworkElement fe && fe.DataContext is MonitorViewModel mvm)
         {
-            GalleryPanel.Visibility       = Visibility.Collapsed;
-            GifPanel.Visibility           = Visibility.Collapsed;
-            LockScreenPanel.Visibility    = Visibility.Collapsed;
-            MonitorContentArea.Visibility = Visibility.Visible;
+            GalleryPanel.Visibility              = Visibility.Collapsed;
+            GifPanel.Visibility                  = Visibility.Collapsed;
+            LockScreenPanel.Visibility           = Visibility.Collapsed;
+            LibraryManagementPanel.Visibility    = Visibility.Collapsed;
+            MonitorContentArea.Visibility        = Visibility.Visible;
             ClearMonitorSelection();
             mvm.IsSelected = true;
             _vm.SelectedMonitor = mvm;

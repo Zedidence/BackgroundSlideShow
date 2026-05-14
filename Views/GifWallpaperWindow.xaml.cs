@@ -35,6 +35,7 @@ public partial class GifWallpaperWindow : Window
     private List<(BitmapFrame Frame, int DelayMs)> _frames = new();
     private int _frameIndex;
     private DispatcherTimer? _frameTimer;
+    private CancellationTokenSource? _loadCts;
 
     public GifWallpaperWindow(Rect monitorBounds)
     {
@@ -74,37 +75,55 @@ public partial class GifWallpaperWindow : Window
     // ── GIF playback ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Decodes all frames from <paramref name="path"/> and begins animating them.
-    /// Safe to call while a GIF is already playing — stops the previous animation first.
+    /// Decodes all frames from <paramref name="path"/> on a background thread and begins animating.
+    /// Safe to call while a GIF is already playing — cancels the previous load and stops animation first.
     /// </summary>
-    public void LoadGif(string path)
+    public async Task LoadGifAsync(string path)
     {
-        // Stop any in-progress animation and release previous frame references.
+        // Cancel any in-flight decode and stop current animation immediately.
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _loadCts = cts;
+
         StopFrameTimer();
         _frames.Clear();
         _frameIndex = 0;
         GifFrame.Source = null;
 
+        List<(BitmapFrame Frame, int DelayMs)> frames;
         try
         {
-            var decoder = new GifBitmapDecoder(
-                new Uri(path, UriKind.Absolute),
-                BitmapCreateOptions.PreservePixelFormat,
-                BitmapCacheOption.OnLoad);
-
-            foreach (var frame in decoder.Frames)
+            frames = await Task.Run(() =>
             {
-                int delayMs = 100; // fallback: 10 fps
-                // GIF frame delay is stored as 1/100 s in the Graphic Control Extension.
-                // Use 'as' cast so a null Metadata object yields null rather than NullReferenceException.
-                if (frame.Metadata is BitmapMetadata meta &&
-                    meta.GetQuery("/grctlext/Delay") is ushort d)
-                {
-                    delayMs = Math.Max(20, d * 10); // clamp to ≥ 20 ms (50 fps max)
-                }
+                var decoder = new GifBitmapDecoder(
+                    new Uri(path, UriKind.Absolute),
+                    BitmapCreateOptions.PreservePixelFormat,
+                    BitmapCacheOption.OnLoad);
 
-                _frames.Add((frame, delayMs));
-            }
+                var result = new List<(BitmapFrame Frame, int DelayMs)>(decoder.Frames.Count);
+                foreach (var frame in decoder.Frames)
+                {
+                    cts.Token.ThrowIfCancellationRequested();
+
+                    int delayMs = 100; // fallback: 10 fps
+                    // GIF frame delay is stored as 1/100 s in the Graphic Control Extension.
+                    if (frame.Metadata is BitmapMetadata meta &&
+                        meta.GetQuery("/grctlext/Delay") is ushort d)
+                    {
+                        delayMs = Math.Max(20, d * 10); // clamp to ≥ 20 ms (50 fps max)
+                    }
+
+                    // Freeze so the UI thread can display the frame from any rendering pass.
+                    if (frame.CanFreeze) frame.Freeze();
+                    result.Add((frame, delayMs));
+                }
+                return result;
+            }, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
@@ -112,6 +131,9 @@ public partial class GifWallpaperWindow : Window
             return;
         }
 
+        if (cts.IsCancellationRequested) return;
+
+        _frames = frames;
         if (_frames.Count == 0) return;
 
         GifFrame.Source = _frames[0].Frame;
@@ -147,6 +169,7 @@ public partial class GifWallpaperWindow : Window
     /// <summary>Stops animation and releases all frame references.</summary>
     public void Stop()
     {
+        _loadCts?.Cancel();
         StopFrameTimer();
         _frames.Clear();
         GifFrame.Source = null;

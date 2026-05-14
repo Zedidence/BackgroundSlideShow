@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Win32;
 using BackgroundSlideShow;
 using BackgroundSlideShow.Models;
@@ -8,8 +9,8 @@ namespace BackgroundSlideShow.Services;
 
 /// <summary>
 /// Persists user-level application settings.
-/// — LaunchOnStartup: stored in the Windows Run registry key.
-/// — HasShownTrayHint, TransitionsEnabled, TransitionDurationMs: stored in a JSON file next to the SQLite database.
+/// — LaunchOnStartup: stored in the Windows Run registry key (never serialized to JSON).
+/// — All other properties: stored in a JSON file next to the SQLite database.
 /// </summary>
 public class AppSettings
 {
@@ -53,8 +54,10 @@ public class AppSettings
 
     /// <summary>
     /// Gets or sets whether this app is registered to launch at Windows startup.
-    /// Reads/writes the HKCU Run registry key directly (no caching).
+    /// Reads/writes the HKCU Run registry key directly — excluded from JSON serialization
+    /// to prevent accidental registry side-effects during Load/Save.
     /// </summary>
+    [JsonIgnore]
     public bool LaunchOnStartup
     {
         get
@@ -75,22 +78,24 @@ public class AppSettings
 
     // ── Persistence ───────────────────────────────────────────────────────────
 
+    private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+
     public void Load()
     {
         try
         {
             if (!File.Exists(SettingsPath)) return;
-            var data = JsonSerializer.Deserialize<SettingsData>(File.ReadAllText(SettingsPath));
-            if (data is null) return;
-            HasShownTrayHint          = data.HasShownTrayHint;
-            TransitionsEnabled        = data.TransitionsEnabled;
-            TransitionDurationMs      = data.TransitionDurationMs;
-            GifFolderPath             = data.GifFolderPath;
-            GifSecondsPerFile         = data.GifSecondsPerFile;
-            LockScreenFolderPath      = data.LockScreenFolderPath;
-            LockScreenIntervalMinutes = data.LockScreenIntervalMinutes;
-            LockScreenCollageEnabled  = data.LockScreenCollageEnabled;
-            LockScreenFitMode         = data.LockScreenFitMode;
+            var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath));
+            if (loaded is null) return;
+            HasShownTrayHint          = loaded.HasShownTrayHint;
+            TransitionsEnabled        = loaded.TransitionsEnabled;
+            TransitionDurationMs      = loaded.TransitionDurationMs;
+            GifFolderPath             = loaded.GifFolderPath;
+            GifSecondsPerFile         = loaded.GifSecondsPerFile;
+            LockScreenFolderPath      = loaded.LockScreenFolderPath;
+            LockScreenIntervalMinutes = loaded.LockScreenIntervalMinutes;
+            LockScreenCollageEnabled  = loaded.LockScreenCollageEnabled;
+            LockScreenFitMode         = loaded.LockScreenFitMode;
         }
         catch (Exception ex) { AppLogger.Warn($"Settings load failed — using defaults. {ex.Message}"); }
     }

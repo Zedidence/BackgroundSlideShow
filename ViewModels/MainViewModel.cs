@@ -43,7 +43,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _monitorService = monitorService;
         _engine = engine;
         _libraryService = libraryService;
-        _library = new LibraryViewModel(libraryService);
+        Library = new LibraryViewModel(libraryService);
         GifPlayer  = gifPlayer;
         LockScreen = lockScreen;
 
@@ -63,10 +63,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
         await _engine.LoadImagePoolAsync();
 
         AppLogger.Info($"InitializeAsync: done — {Monitors.Count} monitor(s)");
+
+        // Background startup scan: pick up any images added/removed since the last run.
+        // Fire-and-forget — reloads pool again when complete so engines see new images.
+        _ = StartupScanAsync();
+    }
+
+    private async Task StartupScanAsync()
+    {
+        await Library.FolderList.ScanOnStartupAsync();
+        await _engine.LoadImagePoolAsync();
     }
 
     [RelayCommand]
-    private async Task RefreshMonitorsAsync()
+    public async Task RefreshMonitorsAsync()
     {
         var hw = _monitorService.GetMonitors();
 

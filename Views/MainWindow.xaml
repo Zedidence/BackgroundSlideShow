@@ -35,7 +35,7 @@
                                IsBackButtonVisible="Collapsed"
                                OpenPaneLength="180"
                                IsPaneOpen="True"
-                               SelectionChanged="RootNavigation_SelectionChanged">
+                               ItemInvoked="RootNavigation_ItemInvoked">
 
                 <ui:NavigationView.MenuItems>
                     <ui:NavigationViewItem Content="Overview" Tag="overview"
@@ -48,6 +48,12 @@
                                            ToolTip="Browse all images in your library">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Image24"/>
+                        </ui:NavigationViewItem.Icon>
+                    </ui:NavigationViewItem>
+                    <ui:NavigationViewItem Content="Library" Tag="library"
+                                           ToolTip="Manage image folders">
+                        <ui:NavigationViewItem.Icon>
+                            <ui:SymbolIcon Symbol="Folder24"/>
                         </ui:NavigationViewItem.Icon>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="GIF Mode" Tag="gif"
@@ -206,7 +212,7 @@
 
                     <!-- Switched views -->
                     <Grid x:Name="MonitorContentArea" Grid.Row="2">
-                        <local:MonitorOverviewPanel DataContext="{Binding}">
+                        <local:MonitorOverviewPanel>
                             <local:MonitorOverviewPanel.Style>
                                 <Style TargetType="local:MonitorOverviewPanel">
                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -222,7 +228,7 @@
                         <ContentControl Content="{Binding SelectedMonitor}">
                             <ContentControl.ContentTemplate>
                                 <DataTemplate>
-                                    <local:MonitorPanel DataContext="{Binding}"/>
+                                    <local:MonitorPanel/>
                                 </DataTemplate>
                             </ContentControl.ContentTemplate>
                             <ContentControl.Style>
@@ -249,6 +255,10 @@
                     <local:LockScreenView x:Name="LockScreenPanel" Grid.Row="2"
                                           DataContext="{Binding LockScreen}"
                                           Visibility="Collapsed"/>
+
+                    <local:FolderManagementView x:Name="LibraryManagementPanel" Grid.Row="2"
+                                                DataContext="{Binding Library.FolderList}"
+                                                Visibility="Collapsed"/>
                 </Grid>
             </Grid>
         </Grid>

@@ -18,15 +18,19 @@ public class ThumbnailConverter : IValueConverter
         {
             // Prefer the pre-generated 200 px cache JPEG — much faster than decoding the
             // full-resolution original (which can be tens of megabytes for a 4 K wallpaper).
-            string loadPath = ThumbnailCacheService.TryGetCachedPath(path, out var thumb) ? thumb : path;
+            bool isCached = ThumbnailCacheService.TryGetCachedPath(path, out var thumb);
+            string loadPath = isCached ? thumb! : path;
 
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.UriSource = new Uri(loadPath);
             bmp.DecodePixelWidth = decodeWidth;
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            // OnLoad for cached thumbnails (small, fast, must be frozen for cross-thread use).
+            // Default for uncached originals — WPF decodes lazily off the UI thread so large
+            // files don't block the render pass.
+            bmp.CacheOption = isCached ? BitmapCacheOption.OnLoad : BitmapCacheOption.Default;
             bmp.EndInit();
-            bmp.Freeze();
+            if (bmp.CanFreeze) bmp.Freeze();
             return bmp;
         }
         catch (Exception ex)
