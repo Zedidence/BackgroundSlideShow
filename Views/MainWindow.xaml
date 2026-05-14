@@ -35,34 +35,39 @@
                                IsBackButtonVisible="Collapsed"
                                OpenPaneLength="180"
                                IsPaneOpen="True"
-                               ItemInvoked="RootNavigation_ItemInvoked">
+                               >
 
                 <ui:NavigationView.MenuItems>
                     <ui:NavigationViewItem Content="Overview" Tag="overview"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Monitor overview dashboard">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Grid24"/>
                         </ui:NavigationViewItem.Icon>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="Gallery" Tag="gallery"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Browse all images in your library">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Image24"/>
                         </ui:NavigationViewItem.Icon>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="Library" Tag="library"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Manage image folders">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Folder24"/>
                         </ui:NavigationViewItem.Icon>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="GIF Mode" Tag="gif"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Play animated GIFs as live desktop wallpaper">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Filmstrip24"/>
                         </ui:NavigationViewItem.Icon>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="Lock Screen" Tag="lockscreen"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Set a custom Windows lock screen image">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="LockClosed24"/>
@@ -72,6 +77,7 @@
 
                 <ui:NavigationView.FooterMenuItems>
                     <ui:NavigationViewItem Content="Settings" Tag="settings"
+                                           PreviewMouseLeftButtonDown="NavItem_Click"
                                            ToolTip="Application settings">
                         <ui:NavigationViewItem.Icon>
                             <ui:SymbolIcon Symbol="Settings24"/>

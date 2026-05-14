@@ -63,33 +63,17 @@ public partial class MainWindow : FluentWindow
 
     // ── NavigationView ──────────────────────────────────────────────────────
 
-    private void RootNavigation_ItemInvoked(NavigationView sender, RoutedEventArgs args)
+    private void NavItem_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        var item = sender.SelectedItem as NavigationViewItem
-                   ?? args.Source as NavigationViewItem;
-        if (item == null) return;
-        var tag = item.Tag as string;
-
+        if (sender is not FrameworkElement fe || fe.Tag is not string tag) return;
         switch (tag)
         {
-            case "overview":
-                ShowOverview();
-                break;
-            case "gallery":
-                ShowGallery();
-                break;
-            case "library":
-                ShowLibraryTab();
-                break;
-            case "gif":
-                ShowGifMode();
-                break;
-            case "lockscreen":
-                ShowLockScreen();
-                break;
-            case "settings":
-                ShowSettings();
-                break;
+            case "overview":   ShowOverview();   break;
+            case "gallery":    ShowGallery();    break;
+            case "library":    ShowLibraryTab(); break;
+            case "gif":        ShowGifMode();    break;
+            case "lockscreen": ShowLockScreen(); break;
+            case "settings":   ShowSettings();   break;
         }
     }
 
