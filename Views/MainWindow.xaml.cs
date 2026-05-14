@@ -170,6 +170,7 @@ public partial class MainWindow : FluentWindow
         MonitorContentArea.Visibility        = Visibility.Visible;
         MonitorOverviewView.Visibility       = Visibility.Collapsed;
         MonitorDetailView.Visibility         = Visibility.Visible;
+        ShowLibrarySidebar(false);
         ClearMonitorSelection();
         mvm.IsSelected = true;
         _vm.SelectedMonitor = mvm;
