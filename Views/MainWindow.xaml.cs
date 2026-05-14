@@ -163,6 +163,7 @@ public partial class MainWindow : FluentWindow
 
     internal void NavigateToMonitor(MonitorViewModel mvm)
     {
+        AppLogger.Info($"NavigateToMonitor: {mvm.DisplayName}");
         GalleryPanel.Visibility              = Visibility.Collapsed;
         GifPanel.Visibility                  = Visibility.Collapsed;
         LockScreenPanel.Visibility           = Visibility.Collapsed;
@@ -174,6 +175,7 @@ public partial class MainWindow : FluentWindow
         ClearMonitorSelection();
         mvm.IsSelected = true;
         _vm.SelectedMonitor = mvm;
+        AppLogger.Info($"NavigateToMonitor done — DetailView={MonitorDetailView.Visibility}, ContentArea={MonitorContentArea.Visibility}");
     }
 
     private void MonitorCard_Click(object sender, MouseButtonEventArgs e)

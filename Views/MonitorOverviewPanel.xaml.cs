@@ -13,8 +13,23 @@ public partial class MonitorOverviewPanel : UserControl
 
     private void Configure_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement fe) return;
-        if (fe.DataContext is not MonitorViewModel mvm) return;
-        (Window.GetWindow(this) as MainWindow)?.NavigateToMonitor(mvm);
+        if (sender is not FrameworkElement fe)
+        {
+            AppLogger.Warn("Configure_Click: sender is not FrameworkElement");
+            return;
+        }
+        if (fe.DataContext is not MonitorViewModel mvm)
+        {
+            AppLogger.Warn($"Configure_Click: DataContext is {fe.DataContext?.GetType().Name ?? "null"}, not MonitorViewModel");
+            return;
+        }
+        var win = Window.GetWindow(this) as MainWindow;
+        if (win is null)
+        {
+            AppLogger.Warn($"Configure_Click: Window.GetWindow returned {Window.GetWindow(this)?.GetType().Name ?? "null"}");
+            return;
+        }
+        AppLogger.Info($"Configure_Click: navigating to {mvm.DisplayName}");
+        win.NavigateToMonitor(mvm);
     }
 }
