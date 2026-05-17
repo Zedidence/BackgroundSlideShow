@@ -16,31 +16,25 @@
             <local:EnumToBoolConverter x:Key="EnumBoolConverter"
                 xmlns:local="clr-namespace:BackgroundSlideShow"/>
 
-            <!-- Shared Play/Resume button style for monitor cards and detail panel.
-                 x:Shared="False" so each button gets its own Content element tree. -->
-            <Style x:Key="PlayResumeButtonStyle" TargetType="Button" x:Shared="False"
-                   xmlns:local="clr-namespace:BackgroundSlideShow">
+            <!-- Shared Play/Resume button style for monitor cards and detail panel. -->
+            <Style x:Key="PlayResumeButtonStyle" TargetType="Button">
                 <Setter Property="Padding" Value="10,6"/>
                 <Setter Property="Command" Value="{Binding StartCommand}"/>
-                <Setter Property="Content">
+                <Setter Property="Content" Value="Play"/>
+                <Setter Property="ContentTemplate">
                     <Setter.Value>
-                        <StackPanel Orientation="Horizontal">
-                            <ui:SymbolIcon Symbol="Play24" FontSize="14" Margin="0,0,6,0"/>
-                            <TextBlock Text="Play"/>
-                        </StackPanel>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Play24" FontSize="14" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding}"/>
+                            </StackPanel>
+                        </DataTemplate>
                     </Setter.Value>
                 </Setter>
                 <Style.Triggers>
                     <DataTrigger Binding="{Binding Status}" Value="Paused">
                         <Setter Property="Command" Value="{Binding ResumeCommand}"/>
-                        <Setter Property="Content">
-                            <Setter.Value>
-                                <StackPanel Orientation="Horizontal">
-                                    <ui:SymbolIcon Symbol="Play24" FontSize="14" Margin="0,0,6,0"/>
-                                    <TextBlock Text="Resume"/>
-                                </StackPanel>
-                            </Setter.Value>
-                        </Setter>
+                        <Setter Property="Content" Value="Resume"/>
                     </DataTrigger>
                 </Style.Triggers>
             </Style>
