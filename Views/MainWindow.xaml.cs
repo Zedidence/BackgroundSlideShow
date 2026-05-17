@@ -88,7 +88,6 @@ public partial class MainWindow : FluentWindow
         MonitorDetailView.Visibility         = Visibility.Collapsed;
         _vm.SelectedMonitor = null;
         ClearMonitorSelection();
-        ShowLibrarySidebar(true);
     }
 
     private void ShowGallery()
@@ -100,7 +99,6 @@ public partial class MainWindow : FluentWindow
         LockScreenPanel.Visibility           = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Collapsed;
         GalleryPanel.Visibility              = Visibility.Visible;
-        ShowLibrarySidebar(true);
     }
 
     private void ShowLibraryTab()
@@ -112,7 +110,6 @@ public partial class MainWindow : FluentWindow
         GifPanel.Visibility                  = Visibility.Collapsed;
         LockScreenPanel.Visibility           = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Visible;
-        ShowLibrarySidebar(false);
     }
 
     private void ShowGifMode()
@@ -124,7 +121,6 @@ public partial class MainWindow : FluentWindow
         LockScreenPanel.Visibility           = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Collapsed;
         GifPanel.Visibility                  = Visibility.Visible;
-        ShowLibrarySidebar(false);
     }
 
     private void ShowLockScreen()
@@ -136,22 +132,11 @@ public partial class MainWindow : FluentWindow
         GifPanel.Visibility                  = Visibility.Collapsed;
         LibraryManagementPanel.Visibility    = Visibility.Collapsed;
         LockScreenPanel.Visibility           = Visibility.Visible;
-        ShowLibrarySidebar(false);
     }
 
     private void ShowSettings()
     {
         new SettingsWindow(_appSettings) { Owner = this }.ShowDialog();
-    }
-
-    // ── Library sidebar ─────────────────────────────────────────────────────
-
-    private void ShowLibrarySidebar(bool show)
-    {
-        LibraryPanel.Visibility    = show ? Visibility.Visible : Visibility.Collapsed;
-        LibrarySplitter.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        LibraryColumn.Width        = show ? new GridLength(220) : new GridLength(0);
-        SplitterColumn.Width       = show ? new GridLength(4)   : new GridLength(0);
     }
 
     // ── Monitor selection ───────────────────────────────────────────────────
@@ -171,7 +156,6 @@ public partial class MainWindow : FluentWindow
         MonitorContentArea.Visibility        = Visibility.Visible;
         MonitorOverviewView.Visibility       = Visibility.Collapsed;
         MonitorDetailView.Visibility         = Visibility.Visible;
-        ShowLibrarySidebar(false);
         ClearMonitorSelection();
         mvm.IsSelected = true;
         _vm.SelectedMonitor = mvm;

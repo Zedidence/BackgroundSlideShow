@@ -86,24 +86,8 @@
                 </ui:NavigationView.FooterMenuItems>
             </ui:NavigationView>
 
-            <!-- Right: content area with optional library sidebar -->
+            <!-- Right: main content -->
             <Grid Grid.Column="1">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="LibraryColumn" Width="220" MinWidth="160" MaxWidth="320"/>
-                    <ColumnDefinition x:Name="SplitterColumn" Width="4"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
-                <!-- Library panel (folder management) -->
-                <local:LibraryView x:Name="LibraryPanel" Grid.Column="0"
-                                   DataContext="{Binding Library.FolderList}"/>
-
-                <GridSplitter x:Name="LibrarySplitter" Grid.Column="1" Width="4"
-                              Background="Transparent"
-                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-
-                <!-- Main content -->
-                <Grid Grid.Column="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -247,7 +231,6 @@
                     <local:FolderManagementView x:Name="LibraryManagementPanel" Grid.Row="2"
                                                 DataContext="{Binding Library.FolderList}"
                                                 Visibility="Collapsed"/>
-                </Grid>
             </Grid>
         </Grid>
     </Grid>
