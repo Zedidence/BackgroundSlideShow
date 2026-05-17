@@ -1,37 +1,53 @@
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace BackgroundSlideShow.Views;
 
 /// <summary>
-/// Full-screen borderless window that sits at HWND_BOTTOM and animates a GIF
-/// frame-by-frame using per-frame delay metadata from the GIF file.
+/// Full-screen borderless window that sits behind desktop icons (embedded in the
+/// WorkerW layer) and animates a GIF frame-by-frame using per-frame delay metadata.
 ///
 /// Lifecycle:
-///   1. Caller creates the window, calls Show(), then calls LoadGif(path).
-///   2. LoadGif decodes all frames via GifBitmapDecoder and starts the frame timer.
+///   1. Caller creates the window, calls Show(), then calls LoadGifAsync(path).
+///   2. LoadGifAsync decodes all frames via GifBitmapDecoder and starts the frame timer.
 ///   3. Stop() halts the timer and releases frame references.
-///   4. LoadGif() can be called again at any time to switch to a different GIF.
+///   4. LoadGifAsync() can be called again at any time to switch to a different GIF.
 /// </summary>
 public partial class GifWallpaperWindow : Window
 {
-    // ── Win32: position window in physical pixels regardless of DPI ───────────
+    // ── Win32 ────────────────────────────────────────────────────────────────
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
 
-    private static readonly IntPtr HWND_BOTTOM = new(1);
+    [DllImport("user32.dll")]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter,
+        string? lpszClass, string? lpszWindow);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg,
+        UIntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    private static readonly IntPtr HWND_BOTTOM = new(1);
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_NOMOVE     = 0x0002;
     private const uint SWP_NOSIZE     = 0x0001;
+    private const uint SWP_SHOWWINDOW = 0x0040;
+    private const uint SMTO_NORMAL    = 0x0000;
 
-    // ── Fields ────────────────────────────────────────────────────────────────
+    // ── Fields ──────────────────────────────────────────────────────────────
 
-    private readonly Rect _monitorBounds;
+    private readonly Rect _monitorBounds; // physical pixels from GDI
     private List<(BitmapFrame Frame, int DelayMs)> _frames = new();
     private int _frameIndex;
     private DispatcherTimer? _frameTimer;
@@ -42,7 +58,8 @@ public partial class GifWallpaperWindow : Window
         InitializeComponent();
         _monitorBounds = monitorBounds;
 
-        // Initial WPF position — corrected to physical pixels in OnSourceInitialized.
+        // Set initial WPF position — we'll correct with SetWindowPos in OnSourceInitialized.
+        // Use physical pixel values directly; DPI correction happens via SetWindowPos.
         Left   = monitorBounds.Left;
         Top    = monitorBounds.Top;
         Width  = monitorBounds.Width;
@@ -52,27 +69,81 @@ public partial class GifWallpaperWindow : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var hwnd = new WindowInteropHelper(this).Handle;
+
+        // Position with physical pixel coordinates via SetWindowPos (bypasses WPF DPI scaling).
         SetWindowPos(hwnd, HWND_BOTTOM,
             (int)_monitorBounds.Left, (int)_monitorBounds.Top,
             (int)_monitorBounds.Width, (int)_monitorBounds.Height,
-            SWP_NOACTIVATE);
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        // Attempt to embed behind desktop icons via WorkerW.
+        EmbedBehindIcons(hwnd);
+    }
+
+    /// <summary>
+    /// Finds or creates the WorkerW window behind desktop icons and parents this
+    /// window into it, so the GIF appears below icons but above the static wallpaper.
+    /// Falls back to HWND_BOTTOM if the WorkerW trick fails.
+    /// </summary>
+    private void EmbedBehindIcons(IntPtr hwnd)
+    {
+        try
+        {
+            var progman = FindWindow("Progman", null);
+            if (progman == IntPtr.Zero) return;
+
+            // Ask Progman to spawn a WorkerW behind the desktop icons.
+            SendMessageTimeout(progman, 0x052C, UIntPtr.Zero, IntPtr.Zero,
+                SMTO_NORMAL, 1000, out _);
+
+            // Find the WorkerW that sits between Progman and the desktop icon layer.
+            IntPtr workerW = IntPtr.Zero;
+            IntPtr child = IntPtr.Zero;
+            while (true)
+            {
+                child = FindWindowEx(IntPtr.Zero, child, "WorkerW", null);
+                if (child == IntPtr.Zero) break;
+
+                var shellView = FindWindowEx(child, IntPtr.Zero, "SHELLDLL_DefView", null);
+                if (shellView != IntPtr.Zero)
+                {
+                    // The *next* WorkerW after the one containing SHELLDLL_DefView is our target.
+                    workerW = FindWindowEx(IntPtr.Zero, child, "WorkerW", null);
+                    break;
+                }
+            }
+
+            if (workerW != IntPtr.Zero)
+            {
+                SetParent(hwnd, workerW);
+                // Re-apply position relative to the WorkerW parent (which spans virtual desktop).
+                SetWindowPos(hwnd, IntPtr.Zero,
+                    (int)_monitorBounds.Left, (int)_monitorBounds.Top,
+                    (int)_monitorBounds.Width, (int)_monitorBounds.Height,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"GifWallpaperWindow: WorkerW embedding failed, using HWND_BOTTOM fallback. {ex.Message}");
+        }
     }
 
     /// <summary>
     /// Re-order to HWND_BOTTOM any time WPF tries to activate (raise) the window.
+    /// Only needed when not embedded in WorkerW.
     /// </summary>
     protected override void OnActivated(EventArgs e) => SendToBottom();
 
-    /// <summary>Pushes the window behind all normal app windows (above wallpaper only).</summary>
     internal void SendToBottom()
     {
-        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero) return;
         SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
     }
 
-    // ── GIF playback ──────────────────────────────────────────────────────────
+    // ── GIF playback ────────────────────────────────────────────────────────
 
     /// <summary>
     /// Decodes all frames from <paramref name="path"/> on a background thread and begins animating.
@@ -80,13 +151,14 @@ public partial class GifWallpaperWindow : Window
     /// </summary>
     public async Task LoadGifAsync(string path)
     {
-        // Cancel any in-flight decode and stop current animation immediately.
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         var cts = new CancellationTokenSource();
         _loadCts = cts;
 
         StopFrameTimer();
+
+        // Release old frames immediately to reduce peak memory.
         _frames.Clear();
         _frameIndex = 0;
         GifFrame.Source = null;
@@ -107,14 +179,25 @@ public partial class GifWallpaperWindow : Window
                     cts.Token.ThrowIfCancellationRequested();
 
                     int delayMs = 100; // fallback: 10 fps
-                    // GIF frame delay is stored as 1/100 s in the Graphic Control Extension.
-                    if (frame.Metadata is BitmapMetadata meta &&
-                        meta.GetQuery("/grctlext/Delay") is ushort d)
+                    if (frame.Metadata is BitmapMetadata meta)
                     {
-                        delayMs = Math.Max(20, d * 10); // clamp to ≥ 20 ms (50 fps max)
+                        try
+                        {
+                            var delayObj = meta.GetQuery("/grctlext/Delay");
+                            delayMs = delayObj switch
+                            {
+                                ushort d => Math.Max(20, d * 10),
+                                int d    => Math.Max(20, d * 10),
+                                short d  => Math.Max(20, d * 10),
+                                _        => 100
+                            };
+                        }
+                        catch
+                        {
+                            // Metadata query failed — use fallback.
+                        }
                     }
 
-                    // Freeze so the UI thread can display the frame from any rendering pass.
                     if (frame.CanFreeze) frame.Freeze();
                     result.Add((frame, delayMs));
                 }
@@ -138,7 +221,6 @@ public partial class GifWallpaperWindow : Window
 
         GifFrame.Source = _frames[0].Frame;
 
-        // Single-frame "GIF" is effectively a static image — no timer needed.
         if (_frames.Count == 1) return;
 
         var ft = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_frames[0].DelayMs) };

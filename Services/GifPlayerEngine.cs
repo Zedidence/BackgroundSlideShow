@@ -22,12 +22,12 @@ public sealed class GifPlayerEngine : IDisposable
     private readonly MonitorService _monitorService;
     private readonly AppSettings    _appSettings;
 
-    // One window per monitor device path.
     private readonly Dictionary<string, Views.GifWallpaperWindow> _windows = new();
 
     private List<string> _gifFiles  = new();
     private int          _gifIndex  = 0;
     private DispatcherTimer? _cycleTimer;
+    private FileSystemWatcher? _folderWatcher;
 
     public bool   IsRunning       => _windows.Count > 0;
     public int    GifCount        => _gifFiles.Count;
@@ -68,7 +68,6 @@ public sealed class GifPlayerEngine : IDisposable
         _gifIndex = 0;
         var firstGif = _gifFiles[0];
 
-        // Create one overlay window per connected monitor.
         foreach (var monitor in _monitorService.GetMonitors())
         {
             if (monitor.Bounds.IsEmpty) continue;
@@ -77,7 +76,7 @@ public sealed class GifPlayerEngine : IDisposable
             _windows[monitor.DeviceId] = win;
             win.Show();
             win.SendToBottom();
-            _ = win.LoadGifAsync(firstGif);
+            LoadGifSafe(win, firstGif);
         }
 
         if (_windows.Count == 0)
@@ -87,6 +86,7 @@ public sealed class GifPlayerEngine : IDisposable
         }
 
         StartCycleTimer();
+        StartFolderWatcher(folder);
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -94,6 +94,7 @@ public sealed class GifPlayerEngine : IDisposable
     {
         AssertUiThread();
         StopCycleTimer();
+        StopFolderWatcher();
 
         foreach (var win in _windows.Values)
         {
@@ -128,12 +129,29 @@ public sealed class GifPlayerEngine : IDisposable
         var path = _gifFiles[_gifIndex];
 
         foreach (var win in _windows.Values)
-            _ = win.LoadGifAsync(path);
+            LoadGifSafe(win, path);
 
-        // Restart so the new GIF always gets its full configured duration.
         RestartCycleTimer();
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>
+    /// Loads a GIF into a window, logging any unhandled exceptions instead of
+    /// letting them disappear into fire-and-forget void.
+    /// </summary>
+    private static async void LoadGifSafe(Views.GifWallpaperWindow win, string path)
+    {
+        try
+        {
+            await win.LoadGifAsync(path);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"GifPlayerEngine: LoadGifAsync failed for '{path}'", ex);
+        }
+    }
+
+    // ── Cycle timer ──────────────────────────────────────────────────────────
 
     private void StartCycleTimer()
     {
@@ -157,8 +175,95 @@ public sealed class GifPlayerEngine : IDisposable
         StartCycleTimer();
     }
 
-    private void OnCycleTick(object? s, EventArgs e) =>
-        AdvanceTo((_gifIndex + 1) % _gifFiles.Count);
+    private void OnCycleTick(object? s, EventArgs e)
+    {
+        // Re-read the setting each tick so slider changes take effect immediately.
+        var seconds = Math.Max(1, _appSettings.GifSecondsPerFile);
+        _cycleTimer!.Interval = TimeSpan.FromSeconds(seconds);
 
-    public void Dispose() => Stop();
+        AdvanceTo((_gifIndex + 1) % _gifFiles.Count);
+    }
+
+    // ── Folder watcher ───────────────────────────────────────────────────────
+
+    private void StartFolderWatcher(string folder)
+    {
+        StopFolderWatcher();
+
+        _folderWatcher = new FileSystemWatcher(folder, "*.gif")
+        {
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
+            EnableRaisingEvents = true
+        };
+
+        _folderWatcher.Created += OnFolderChanged;
+        _folderWatcher.Deleted += OnFolderChanged;
+        _folderWatcher.Renamed += OnFolderRenamed;
+    }
+
+    private void StopFolderWatcher()
+    {
+        if (_folderWatcher is null) return;
+        _folderWatcher.EnableRaisingEvents = false;
+        _folderWatcher.Created -= OnFolderChanged;
+        _folderWatcher.Deleted -= OnFolderChanged;
+        _folderWatcher.Renamed -= OnFolderRenamed;
+        _folderWatcher.Dispose();
+        _folderWatcher = null;
+    }
+
+    private void OnFolderChanged(object sender, FileSystemEventArgs e) => RefreshFileList();
+    private void OnFolderRenamed(object sender, RenamedEventArgs e) => RefreshFileList();
+
+    private void RefreshFileList()
+    {
+        // FileSystemWatcher fires on a thread pool thread — marshal to UI.
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsRunning) return;
+
+            var folder = _appSettings.GifFolderPath;
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+
+            var currentFile = _gifFiles.Count > 0 ? _gifFiles[_gifIndex] : null;
+
+            _gifFiles = Directory.GetFiles(folder, "*.gif", SearchOption.TopDirectoryOnly)
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (_gifFiles.Count == 0)
+            {
+                Stop();
+                return;
+            }
+
+            // Try to preserve current position by finding the same file.
+            _gifIndex = currentFile != null
+                ? Math.Max(0, _gifFiles.IndexOf(currentFile))
+                : 0;
+
+            StateChanged?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
+    // ── Disposal ─────────────────────────────────────────────────────────────
+
+    public void Dispose()
+    {
+        StopFolderWatcher();
+
+        if (Application.Current?.Dispatcher.CheckAccess() == true)
+        {
+            Stop();
+        }
+        else if (Application.Current != null)
+        {
+            Application.Current.Dispatcher.Invoke(Stop);
+        }
+        else
+        {
+            // App is shutting down — timer and windows will be collected.
+            StopCycleTimer();
+        }
+    }
 }
